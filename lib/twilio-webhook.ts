@@ -50,9 +50,3 @@ export function validateTwilioRequest(
 export function emptyTwimlResponse(): string {
   return new twilio.twiml.MessagingResponse().toString();
 }
-
-export function replyTwimlResponse(message: string): string {
-  const twiml = new twilio.twiml.MessagingResponse();
-  twiml.message(message);
-  return twiml.toString();
-}

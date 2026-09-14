@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   emptyTwimlResponse,
   parseIncomingMessage,
-  replyTwimlResponse,
   validateTwilioRequest,
 } from "@/lib/twilio-webhook";
 
@@ -27,12 +26,7 @@ async function handleIncoming(
     mediaUrls: incoming.mediaUrls,
   });
 
-  const autoReply = process.env.TWILIO_AUTO_REPLY?.trim();
-  const twiml = autoReply
-    ? replyTwimlResponse(autoReply)
-    : emptyTwimlResponse();
-
-  return new NextResponse(twiml, {
+  return new NextResponse(emptyTwimlResponse(), {
     status: 200,
     headers: { "Content-Type": "text/xml" },
   });
