@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import twilio from "twilio";
+import { buildConversations, ChatMessage } from "@/lib/messages";
 
 export async function GET() {
   const accountSid = process.env.TWILIO_ACCOUNT_SID;
@@ -15,28 +16,28 @@ export async function GET() {
 
   try {
     const client = twilio(accountSid, authToken);
-    const messages = await client.messages.list({
-      to: fromNumber,
-      limit: 50,
-    });
 
-    const incoming = messages
-      .filter((msg) => msg.direction.startsWith("inbound"))
-      .map((msg) => ({
+    const [incoming, outgoing] = await Promise.all([
+      client.messages.list({ to: fromNumber, limit: 100 }),
+      client.messages.list({ from: fromNumber, limit: 100 }),
+    ]);
+
+    const allMessages: ChatMessage[] = [...incoming, ...outgoing].map(
+      (msg) => ({
         sid: msg.sid,
         from: msg.from,
         to: msg.to,
         body: msg.body,
-        dateCreated: msg.dateCreated,
+        dateCreated: msg.dateCreated.toISOString(),
+        direction: msg.direction.startsWith("inbound") ? "inbound" : "outbound",
         status: msg.status,
         numMedia: msg.numMedia,
-      }))
-      .sort(
-        (a, b) =>
-          new Date(b.dateCreated).getTime() - new Date(a.dateCreated).getTime()
-      );
+      })
+    );
 
-    return NextResponse.json({ messages: incoming });
+    const conversations = buildConversations(allMessages);
+
+    return NextResponse.json({ conversations });
   } catch (err) {
     return NextResponse.json(
       {
