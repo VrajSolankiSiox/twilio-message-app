@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
+import ReceivedMessages from "@/components/ReceivedMessages";
 import { parsePhoneNumbersFromFile } from "@/lib/csv";
 import { normalizePhone } from "@/lib/phone";
 
@@ -91,7 +92,7 @@ export default function Home() {
 
   return (
     <div className="min-h-full bg-zinc-50 dark:bg-zinc-950">
-      <main className="mx-auto max-w-3xl px-6 py-12">
+      <main className="mx-auto max-w-4xl px-6 py-12">
         <div className="mb-10">
           <h1 className="text-3xl font-bold tracking-tight text-zinc-900 dark:text-zinc-50">
             Twilio Bulk SMS
@@ -256,6 +257,8 @@ export default function Home() {
               </div>
             </section>
           )}
+
+          <ReceivedMessages />
         </div>
       </main>
     </div>
