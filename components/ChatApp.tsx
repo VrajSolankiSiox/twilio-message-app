@@ -1,8 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { Conversation } from "@/lib/messages";
-import { formatPhoneDisplay } from "@/lib/phone";
+import type { ChatMessage, Conversation } from "@/lib/messages";
+import { formatPhoneDisplay, normalizePhone } from "@/lib/phone";
 
 function formatTime(dateStr: string): string {
   const date = new Date(dateStr);
@@ -25,6 +25,49 @@ function getInitials(phone: string): string {
   return phone.replace(/\D/g, "").slice(-2);
 }
 
+function addMessageToConversations(
+  conversations: Conversation[],
+  message: ChatMessage,
+  contactPhone: string
+): Conversation[] {
+  const normalizedContact = normalizePhone(contactPhone);
+  const existing = conversations.find(
+    (c) => normalizePhone(c.phone) === normalizedContact
+  );
+
+  if (existing) {
+    const alreadyExists = existing.messages.some((m) => m.sid === message.sid);
+    if (alreadyExists) return conversations;
+
+    return conversations
+      .map((c) =>
+        normalizePhone(c.phone) === normalizedContact
+          ? {
+              ...c,
+              messages: [...c.messages, message],
+              lastMessage: message.body || "(media)",
+              lastMessageAt: message.dateCreated,
+            }
+          : c
+      )
+      .sort(
+        (a, b) =>
+          new Date(b.lastMessageAt).getTime() -
+          new Date(a.lastMessageAt).getTime()
+      );
+  }
+
+  return [
+    {
+      phone: normalizedContact,
+      messages: [message],
+      lastMessage: message.body || "(media)",
+      lastMessageAt: message.dateCreated,
+    },
+    ...conversations,
+  ];
+}
+
 export default function ChatApp() {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [selectedPhone, setSelectedPhone] = useState<string | null>(null);
@@ -35,12 +78,12 @@ export default function ChatApp() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const selectedConversation = conversations.find(
-    (c) => c.phone === selectedPhone
+    (c) => normalizePhone(c.phone) === normalizePhone(selectedPhone || "")
   );
 
   const fetchConversations = useCallback(async () => {
     try {
-      const res = await fetch("/api/twilio/messages");
+      const res = await fetch("/api/twilio/messages", { cache: "no-store" });
       const data = await res.json();
 
       if (!res.ok) {
@@ -61,9 +104,17 @@ export default function ChatApp() {
     }
   }, []);
 
+  const syncAfterSend = useCallback(async () => {
+    const delays = [1500, 3000, 5000];
+    for (const delay of delays) {
+      await new Promise((r) => setTimeout(r, delay));
+      await fetchConversations();
+    }
+  }, [fetchConversations]);
+
   useEffect(() => {
     fetchConversations();
-    const interval = setInterval(fetchConversations, 10000);
+    const interval = setInterval(fetchConversations, 5000);
     return () => clearInterval(interval);
   }, [fetchConversations]);
 
@@ -75,15 +126,17 @@ export default function ChatApp() {
     e.preventDefault();
     if (!selectedPhone || !replyText.trim() || sending) return;
 
+    const text = replyText.trim();
     setSending(true);
     setError(null);
+    setReplyText("");
 
     try {
       const res = await fetch("/api/send", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          message: replyText.trim(),
+          message: text,
           phoneNumbers: [selectedPhone],
         }),
       });
@@ -91,19 +144,38 @@ export default function ChatApp() {
       const data = await res.json();
 
       if (!res.ok) {
+        setReplyText(text);
         setError(data.error || "Failed to send message.");
         return;
       }
 
       const result = data.results?.[0];
       if (result && !result.success) {
+        setReplyText(text);
         setError(result.error || "Failed to send message.");
         return;
       }
 
-      setReplyText("");
-      await fetchConversations();
+      if (result?.success) {
+        const newMessage: ChatMessage = {
+          sid: result.sid,
+          from: result.from,
+          to: result.to,
+          body: result.body,
+          dateCreated: result.dateCreated,
+          direction: "outbound",
+          status: result.status,
+        };
+
+        setConversations((prev) =>
+          addMessageToConversations(prev, newMessage, result.to)
+        );
+        setSelectedPhone(normalizePhone(result.to));
+
+        syncAfterSend();
+      }
     } catch {
+      setReplyText(text);
       setError("Network error. Please try again.");
     } finally {
       setSending(false);
@@ -115,23 +187,20 @@ export default function ChatApp() {
       <div className="flex h-[36rem] flex-col md:h-[32rem] md:flex-row">
         {/* Conversation list */}
         <div className="flex w-full flex-col border-b border-zinc-200 md:w-72 md:border-b-0 md:border-r dark:border-zinc-800">
-          <div className="flex items-center justify-between border-b border-zinc-200 px-4 py-3 dark:border-zinc-800">
+          <div className="border-b border-zinc-200 px-4 py-3 dark:border-zinc-800">
             <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
               Conversations
             </h2>
-            <button
-              onClick={() => {
-                setLoading(true);
-                fetchConversations();
-              }}
-              disabled={loading}
-              className="text-xs font-medium text-red-600 hover:text-red-700 disabled:opacity-50 dark:text-red-400"
-            >
-              {loading ? "..." : "Refresh"}
-            </button>
+            <p className="text-xs text-zinc-500">Auto-refreshes every 5s</p>
           </div>
 
           <div className="flex-1 overflow-y-auto">
+            {loading && conversations.length === 0 && (
+              <p className="px-4 py-8 text-center text-sm text-zinc-500">
+                Loading...
+              </p>
+            )}
+
             {!loading && conversations.length === 0 && (
               <p className="px-4 py-8 text-center text-sm text-zinc-500">
                 No conversations yet
@@ -143,7 +212,8 @@ export default function ChatApp() {
                 key={conv.phone}
                 onClick={() => setSelectedPhone(conv.phone)}
                 className={`flex w-full items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-zinc-50 dark:hover:bg-zinc-800/50 ${
-                  selectedPhone === conv.phone
+                  normalizePhone(selectedPhone || "") ===
+                  normalizePhone(conv.phone)
                     ? "bg-red-50 dark:bg-red-950/30"
                     : ""
                 }`}
@@ -245,19 +315,41 @@ export default function ChatApp() {
                     disabled={sending || !replyText.trim()}
                     className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-red-600 text-white transition-colors hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50"
                   >
-                    <svg
-                      className="h-5 w-5"
-                      fill="none"
-                      viewBox="0 0 24 24"
-                      stroke="currentColor"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"
-                      />
-                    </svg>
+                    {sending ? (
+                      <svg
+                        className="h-5 w-5 animate-spin"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                      >
+                        <circle
+                          className="opacity-25"
+                          cx="12"
+                          cy="12"
+                          r="10"
+                          stroke="currentColor"
+                          strokeWidth="4"
+                        />
+                        <path
+                          className="opacity-75"
+                          fill="currentColor"
+                          d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+                        />
+                      </svg>
+                    ) : (
+                      <svg
+                        className="h-5 w-5"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"
+                        />
+                      </svg>
+                    )}
                   </button>
                 </div>
               </form>

@@ -1,3 +1,5 @@
+import { normalizePhone } from "./phone";
+
 export interface ChatMessage {
   sid: string;
   from: string;
@@ -20,7 +22,9 @@ export function buildConversations(messages: ChatMessage[]): Conversation[] {
   const map = new Map<string, ChatMessage[]>();
 
   for (const msg of messages) {
-    const contact = msg.direction === "inbound" ? msg.from : msg.to;
+    const contact = normalizePhone(
+      msg.direction === "inbound" ? msg.from : msg.to
+    );
     const existing = map.get(contact) ?? [];
     existing.push(msg);
     map.set(contact, existing);

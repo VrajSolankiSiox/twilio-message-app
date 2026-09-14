@@ -7,6 +7,9 @@ interface SendResult {
   success: boolean;
   sid?: string;
   status?: string;
+  body?: string;
+  from?: string;
+  dateCreated?: string;
   error?: string;
 }
 
@@ -57,6 +60,9 @@ export async function POST(request: NextRequest) {
           success: true,
           sid: msg.sid,
           status: msg.status,
+          body: message,
+          from: fromNumber,
+          dateCreated: msg.dateCreated.toISOString(),
         });
       } catch (err) {
         results.push({
