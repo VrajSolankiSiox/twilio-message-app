@@ -1,6 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import twilio from "twilio";
-import { saveMessage } from "@/lib/db/messages";
+import { getSession } from "@/lib/auth";
+import {
+  assignConversation,
+  ensureConversationExists,
+  getAllAssignments,
+  getAssignment,
+} from "@/lib/db/conversations";
+import { getAllMessages, saveMessage } from "@/lib/db/messages";
+import { buildConversations, canUserReplyToConversation } from "@/lib/messages";
 import { normalizePhone } from "@/lib/phone";
 
 interface SendResult {
@@ -15,6 +23,11 @@ interface SendResult {
 }
 
 export async function POST(request: NextRequest) {
+  const session = await getSession();
+  if (!session) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   try {
     const { message, phoneNumbers } = await request.json();
 
@@ -32,6 +45,15 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const isBulk = phoneNumbers.length > 1 || request.nextUrl.searchParams.get("bulk") === "true";
+
+    if (isBulk && session.role !== "admin") {
+      return NextResponse.json(
+        { error: "Only admins can send bulk messages" },
+        { status: 403 }
+      );
+    }
+
     const accountSid = process.env.TWILIO_ACCOUNT_SID;
     const authToken = process.env.TWILIO_AUTH_TOKEN;
     const fromNumber = process.env.TWILIO_FROM_NUMBER;
@@ -41,6 +63,28 @@ export async function POST(request: NextRequest) {
         { error: "Twilio credentials are not configured" },
         { status: 500 }
       );
+    }
+
+    if (!isBulk && phoneNumbers.length === 1) {
+      const phone = normalizePhone(phoneNumbers[0]);
+      const [messages, assignments] = await Promise.all([
+        getAllMessages(),
+        getAllAssignments(),
+      ]);
+      const conversations = buildConversations(messages, assignments);
+      const conversation = conversations.find(
+        (c) => normalizePhone(c.phone) === phone
+      );
+
+      if (
+        conversation &&
+        !canUserReplyToConversation(conversation, session.userId, session.role)
+      ) {
+        return NextResponse.json(
+          { error: "This conversation is assigned to another team member" },
+          { status: 403 }
+        );
+      }
     }
 
     const client = twilio(accountSid, authToken);
@@ -67,6 +111,20 @@ export async function POST(request: NextRequest) {
           status: msg.status,
           dateCreated: msg.dateCreated,
         });
+
+        await ensureConversationExists(to);
+
+        if (!isBulk) {
+          const assignment = await getAssignment(to);
+          if (!assignment?.assignedToUserId) {
+            await assignConversation(
+              to,
+              session.userId,
+              session.fullName,
+              session.email
+            );
+          }
+        }
 
         results.push({
           to,

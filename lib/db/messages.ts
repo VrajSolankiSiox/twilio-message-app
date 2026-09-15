@@ -32,6 +32,11 @@ export async function saveMessage(
   message: Omit<StoredMessage, "createdAt">
 ): Promise<void> {
   await ensureIndexes();
+  const { ensureConversationExists } = await import("@/lib/db/conversations");
+  const contactPhone =
+    message.direction === "inbound" ? message.from : message.to;
+  await ensureConversationExists(contactPhone);
+
   const db = await getDb();
 
   await db.collection<StoredMessage>("messages").updateOne(

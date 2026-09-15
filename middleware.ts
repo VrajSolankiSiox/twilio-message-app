@@ -1,7 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { jwtVerify } from "jose";
 
-const PUBLIC_PATHS = ["/login", "/api/auth/login", "/api/twilio/incoming"];
+const PUBLIC_PATHS = [
+  "/login",
+  "/api/auth/login",
+  "/api/twilio/incoming",
+  "/api/twilio/call-status",
+  "/api/twilio/voice",
+];
 
 function isPublicPath(pathname: string): boolean {
   return PUBLIC_PATHS.some(

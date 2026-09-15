@@ -1,37 +1,41 @@
-import { timingSafeEqual } from "crypto";
 import { SignJWT, jwtVerify } from "jose";
 import { cookies } from "next/headers";
+import { findUserById, User, UserRole, verifyUserPassword } from "@/lib/db/users";
 
 const SESSION_COOKIE = "session";
 const SESSION_DURATION = "7d";
 
+export interface SessionUser {
+  userId: string;
+  email: string;
+  role: UserRole;
+  fullName: string;
+}
+
 function getSecret() {
-  const secret = process.env.AUTH_SECRET;
-  if (!secret) throw new Error("AUTH_SECRET is not defined");
+  const secret = process.env.AUTH_SECRET?.trim();
+  if (!secret) {
+    throw new Error(
+      "AUTH_SECRET is not defined. Add it to .env.local or Vercel environment variables."
+    );
+  }
   return new TextEncoder().encode(secret);
 }
 
-function safeCompare(a: string, b: string): boolean {
-  const bufA = Buffer.from(a);
-  const bufB = Buffer.from(b);
-  if (bufA.length !== bufB.length) return false;
-  return timingSafeEqual(bufA, bufB);
-}
-
-export function validateCredentials(
+export async function authenticateUser(
   email: string,
   password: string
-): boolean {
-  const adminEmail = process.env.ADMIN_EMAIL;
-  const adminPassword = process.env.ADMIN_PASSWORD;
-
-  if (!adminEmail || !adminPassword) return false;
-
-  return safeCompare(email, adminEmail) && safeCompare(password, adminPassword);
+): Promise<User | null> {
+  return verifyUserPassword(email.trim(), password);
 }
 
-export async function createSessionToken(email: string): Promise<string> {
-  return new SignJWT({ email })
+export async function createSessionToken(user: User): Promise<string> {
+  return new SignJWT({
+    userId: user._id.toString(),
+    email: user.email,
+    role: user.role,
+    fullName: user.fullName,
+  })
     .setProtectedHeader({ alg: "HS256" })
     .setIssuedAt()
     .setExpirationTime(SESSION_DURATION)
@@ -40,21 +44,52 @@ export async function createSessionToken(email: string): Promise<string> {
 
 export async function verifySessionToken(
   token: string
-): Promise<{ email: string } | null> {
+): Promise<SessionUser | null> {
   try {
     const { payload } = await jwtVerify(token, getSecret());
-    if (typeof payload.email !== "string") return null;
-    return { email: payload.email };
+    if (
+      typeof payload.userId !== "string" ||
+      typeof payload.email !== "string" ||
+      typeof payload.role !== "string" ||
+      typeof payload.fullName !== "string"
+    ) {
+      return null;
+    }
+
+    return {
+      userId: payload.userId,
+      email: payload.email,
+      role: payload.role as UserRole,
+      fullName: payload.fullName,
+    };
   } catch {
     return null;
   }
 }
 
-export async function getSession() {
+export async function getSession(): Promise<SessionUser | null> {
   const cookieStore = await cookies();
   const token = cookieStore.get(SESSION_COOKIE)?.value;
   if (!token) return null;
   return verifySessionToken(token);
+}
+
+export async function requireSession(): Promise<SessionUser> {
+  const session = await getSession();
+  if (!session) throw new Error("Unauthorized");
+  return session;
+}
+
+export async function requireAdmin(): Promise<SessionUser> {
+  const session = await requireSession();
+  if (session.role !== "admin") throw new Error("Forbidden");
+  return session;
+}
+
+export async function getCurrentUser(): Promise<User | null> {
+  const session = await getSession();
+  if (!session) return null;
+  return findUserById(session.userId);
 }
 
 export { SESSION_COOKIE };

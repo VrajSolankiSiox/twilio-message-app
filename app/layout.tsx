@@ -13,8 +13,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Twilio Bulk SMS",
-  description: "Send bulk SMS messages via Twilio from a CSV file",
+  title: "RevenelX SMS Portal",
+  description: "RevenelX team SMS messaging and bulk communications",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
@@ -23,7 +23,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col">{children}</body>
+      <body className="h-screen overflow-hidden">{children}</body>
     </html>
   );
 }
