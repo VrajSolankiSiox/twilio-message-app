@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { saveMessage } from "@/lib/db/messages";
 import {
   emptyTwimlResponse,
   parseIncomingMessage,
@@ -17,14 +18,21 @@ async function handleIncoming(
 
   const incoming = parseIncomingMessage(params);
 
-  console.log("Incoming Twilio message:", {
-    messageSid: incoming.messageSid,
-    from: incoming.from,
-    to: incoming.to,
-    body: incoming.body,
-    numMedia: incoming.numMedia,
-    mediaUrls: incoming.mediaUrls,
-  });
+  try {
+    await saveMessage({
+      sid: incoming.messageSid,
+      from: incoming.from,
+      to: incoming.to,
+      body: incoming.body,
+      direction: "inbound",
+      status: "received",
+      numMedia: String(incoming.numMedia),
+      mediaUrls: incoming.mediaUrls,
+      dateCreated: new Date(),
+    });
+  } catch (error) {
+    console.error("Failed to save incoming message:", error);
+  }
 
   return new NextResponse(emptyTwimlResponse(), {
     status: 200,

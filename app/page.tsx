@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useRef, useState } from "react";
 import ChatApp from "@/components/ChatApp";
 import { parsePhoneNumbersFromFile } from "@/lib/csv";
@@ -16,6 +17,7 @@ interface SendResult {
 }
 
 export default function Home() {
+  const router = useRouter();
   const [activeTab, setActiveTab] = useState<Tab>("messages");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [message, setMessage] = useState("");
@@ -90,19 +92,33 @@ export default function Home() {
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
+  const handleLogout = async () => {
+    await fetch("/api/auth/logout", { method: "POST" });
+    router.push("/login");
+    router.refresh();
+  };
+
   const successCount = results?.filter((r) => r.success).length ?? 0;
   const failCount = results ? results.length - successCount : 0;
 
   return (
     <div className="min-h-full bg-zinc-50 dark:bg-zinc-950">
       <main className="mx-auto max-w-5xl px-6 py-8">
-        <div className="mb-6">
-          <h1 className="text-2xl font-bold tracking-tight text-zinc-900 dark:text-zinc-50">
-            Twilio SMS
-          </h1>
-          <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
-            Chat with contacts or send bulk messages from a CSV
-          </p>
+        <div className="mb-6 flex items-start justify-between gap-4">
+          <div>
+            <h1 className="text-2xl font-bold tracking-tight text-zinc-900 dark:text-zinc-50">
+              Twilio SMS
+            </h1>
+            <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
+              Chat with contacts or send bulk messages from a CSV
+            </p>
+          </div>
+          <button
+            onClick={handleLogout}
+            className="shrink-0 rounded-lg border border-zinc-300 px-4 py-2 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+          >
+            Logout
+          </button>
         </div>
 
         {/* Tabs */}

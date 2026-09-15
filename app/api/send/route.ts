@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import twilio from "twilio";
+import { saveMessage } from "@/lib/db/messages";
 import { normalizePhone } from "@/lib/phone";
 
 interface SendResult {
@@ -55,6 +56,18 @@ export async function POST(request: NextRequest) {
           body: message,
         });
 
+        const dateCreated = msg.dateCreated.toISOString();
+
+        await saveMessage({
+          sid: msg.sid,
+          from: fromNumber,
+          to,
+          body: message,
+          direction: "outbound",
+          status: msg.status,
+          dateCreated: msg.dateCreated,
+        });
+
         results.push({
           to,
           success: true,
@@ -62,7 +75,7 @@ export async function POST(request: NextRequest) {
           status: msg.status,
           body: message,
           from: fromNumber,
-          dateCreated: msg.dateCreated.toISOString(),
+          dateCreated,
         });
       } catch (err) {
         results.push({
