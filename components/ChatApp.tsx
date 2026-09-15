@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import ConversationList from "@/components/ConversationList";
 import LiveCallBar from "@/components/LiveCallBar";
 import { useVoiceCall } from "@/components/VoiceCallProvider";
 import type { ChatMessage, Conversation } from "@/lib/messages";
@@ -285,7 +286,7 @@ export default function ChatApp() {
   };
 
   return (
-    <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-2xl border border-border bg-surface shadow-sm">
+    <div className="flex h-full min-h-0 w-full flex-col overflow-hidden bg-surface">
       {/* Toolbar */}
       <div className="flex shrink-0 flex-wrap items-center gap-4 border-b border-border bg-brand-muted/30 px-5 py-3">
         <span className="text-xs font-semibold uppercase tracking-wider text-brand">
@@ -314,7 +315,7 @@ export default function ChatApp() {
       {/* Main chat layout */}
       <div className="flex min-h-0 flex-1 overflow-hidden">
         {/* Conversation list */}
-        <div className="flex w-80 shrink-0 flex-col border-r border-border">
+        <div className="flex w-80 shrink-0 flex-col overflow-hidden border-r border-border">
           <div className="shrink-0 border-b border-border px-5 py-4">
             <h2 className="text-sm font-semibold text-foreground">Inbox</h2>
             <p className="text-xs text-zinc-400">
@@ -322,71 +323,14 @@ export default function ChatApp() {
             </p>
           </div>
 
-          <div className="min-h-0 flex-1 overflow-y-auto">
-            {loading && conversations.length === 0 && (
-              <div className="flex items-center justify-center py-16">
-                <div className="h-6 w-6 animate-spin rounded-full border-2 border-brand border-t-transparent" />
-              </div>
-            )}
-
-            {!loading && conversations.length === 0 && (
-              <p className="px-5 py-16 text-center text-sm text-zinc-400">
-                No conversations match your filters
-              </p>
-            )}
-
-            {conversations.map((conv) => {
-              const isSelected =
-                normalizePhone(selectedPhone || "") ===
-                normalizePhone(conv.phone);
-
-              return (
-                <button
-                  key={conv.phone}
-                  onClick={() => setSelectedPhone(conv.phone)}
-                  className={`flex w-full items-start gap-3 border-b border-border/50 px-4 py-3.5 text-left transition-colors ${
-                    isSelected
-                      ? "bg-brand-light"
-                      : "hover:bg-brand-muted/50"
-                  }`}
-                >
-                  <div
-                    className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-sm font-semibold ${
-                      isSelected
-                        ? "bg-brand text-white"
-                        : "bg-brand-muted text-brand"
-                    }`}
-                  >
-                    {getInitials(conv.phone)}
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-baseline justify-between gap-2">
-                      <p className="truncate text-sm font-semibold text-foreground">
-                        {formatPhoneDisplay(conv.phone)}
-                      </p>
-                      <time className="shrink-0 text-[10px] text-zinc-400">
-                        {formatTime(conv.lastMessageAt)}
-                      </time>
-                    </div>
-                    <p className="mt-0.5 truncate text-xs text-zinc-500">
-                      {conv.lastMessage}
-                    </p>
-                    <div className="mt-1.5 flex flex-wrap gap-1">
-                      {conv.assignedToName ? (
-                        <span className="rounded-md bg-white px-1.5 py-0.5 text-[10px] font-medium text-brand shadow-sm">
-                          {conv.assignedToName}
-                        </span>
-                      ) : (
-                        <span className="rounded-md bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-600">
-                          Unassigned
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                </button>
-              );
-            })}
-          </div>
+          <ConversationList
+            conversations={conversations}
+            selectedPhone={selectedPhone}
+            loading={loading}
+            onSelect={setSelectedPhone}
+            formatTime={formatTime}
+            getInitials={getInitials}
+          />
         </div>
 
         {/* Chat panel */}
@@ -450,7 +394,7 @@ export default function ChatApp() {
                 onScroll={handleMessagesScroll}
                 className="min-h-0 flex-1 overflow-y-auto bg-[#f9f8fd] px-6 py-5"
               >
-                <div className="mx-auto max-w-2xl space-y-1">
+                <div className="w-full space-y-1">
                   {selectedConversation.messages.map((msg, idx) => {
                     const isOutbound = msg.direction === "outbound";
                     const dateLabel = formatDateDivider(msg.dateCreated);
@@ -511,7 +455,7 @@ export default function ChatApp() {
                   onSubmit={handleSendReply}
                   className="shrink-0 border-t border-border bg-surface px-6 py-4"
                 >
-                  <div className="mx-auto flex max-w-2xl items-end gap-3">
+                  <div className="flex w-full items-end gap-3">
                     <textarea
                       value={replyText}
                       onChange={(e) => setReplyText(e.target.value)}

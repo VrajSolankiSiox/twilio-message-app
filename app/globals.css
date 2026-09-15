@@ -41,3 +41,249 @@ textarea:focus,
 select:focus {
   outline: none;
 }
+
+/* Login page */
+.login-page {
+  background:
+    radial-gradient(
+      ellipse 80% 60% at 100% 0%,
+      color-mix(in srgb, var(--brand) 12%, transparent),
+      transparent 55%
+    ),
+    radial-gradient(
+      ellipse 60% 50% at 0% 100%,
+      color-mix(in srgb, var(--brand-muted) 80%, transparent),
+      transparent 50%
+    ),
+    var(--background);
+}
+
+.login-page__glow {
+  position: absolute;
+  border-radius: 9999px;
+  filter: blur(80px);
+  pointer-events: none;
+}
+
+.login-page__glow--one {
+  top: -8rem;
+  right: 10%;
+  width: 24rem;
+  height: 24rem;
+  background: color-mix(in srgb, var(--brand) 18%, transparent);
+}
+
+.login-page__glow--two {
+  bottom: -6rem;
+  left: 35%;
+  width: 20rem;
+  height: 20rem;
+  background: color-mix(in srgb, var(--brand-muted) 90%, transparent);
+}
+
+.login-panel-grid {
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.06) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.06) 1px, transparent 1px);
+  background-size: 48px 48px;
+}
+
+.login-panel-shine {
+  background: linear-gradient(
+    145deg,
+    rgba(255, 255, 255, 0.12) 0%,
+    transparent 42%,
+    transparent 68%,
+    rgba(255, 255, 255, 0.04) 100%
+  );
+}
+
+.login-card {
+  animation: login-card-in 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes login-card-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Apple-style liquid glass nav track */
+.nav-track {
+  background: linear-gradient(
+    180deg,
+    rgba(244, 243, 255, 0.9) 0%,
+    rgba(238, 236, 253, 0.75) 100%
+  );
+  border: 1px solid rgba(71, 56, 222, 0.08);
+  box-shadow:
+    inset 0 1px 2px rgba(255, 255, 255, 0.9),
+    inset 0 -1px 2px rgba(71, 56, 222, 0.04);
+}
+
+.nav-indicator {
+  top: 0;
+  height: var(--indicator-h, 0);
+  border-radius: 0.85rem;
+  background: color-mix(
+    in srgb,
+    color-mix(in srgb, var(--brand) 68%, var(--brand-hover)) 98%,
+    transparent
+  );
+  backdrop-filter: blur(16px) saturate(200%);
+  -webkit-backdrop-filter: blur(16px) saturate(200%);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.18),
+    0 2px 10px rgba(56, 41, 176, 0.35),
+    0 6px 20px rgba(56, 41, 176, 0.22);
+  transform: translate3d(0, var(--indicator-y, 0), 0) scale(1);
+  transition:
+    transform 0.48s cubic-bezier(0.22, 1.12, 0.36, 1),
+    height 0.48s cubic-bezier(0.22, 1.12, 0.36, 1),
+    box-shadow 0.18s ease-out,
+    background 0.18s ease-out,
+    opacity 0.2s ease;
+  will-change: transform, height, box-shadow;
+}
+
+.nav-indicator--lifted {
+  background: color-mix(
+    in srgb,
+    color-mix(in srgb, var(--brand) 62%, var(--brand-hover)) 99%,
+    transparent
+  );
+  transform: translate3d(0, var(--indicator-y, 0), 0) scale(1.03)
+    translateY(-2px);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.22),
+    0 6px 18px rgba(56, 41, 176, 0.4),
+    0 14px 34px rgba(56, 41, 176, 0.28);
+}
+
+.nav-indicator--dragging {
+  transition:
+    transform 0.32s cubic-bezier(0.22, 1.14, 0.36, 1),
+    height 0.32s cubic-bezier(0.22, 1.14, 0.36, 1),
+    box-shadow 0.22s ease-out,
+    background 0.22s ease-out;
+}
+
+/* Inbox conversation list — soft row wash (not tab/pill) */
+.inbox-indicator {
+  left: 0;
+  right: 0;
+  top: 0;
+  height: var(--indicator-h, 0);
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--brand) 6%, transparent) 0%,
+    color-mix(in srgb, var(--brand-muted) 92%, transparent) 12%,
+    color-mix(in srgb, var(--brand-muted) 70%, transparent) 100%
+  );
+  border-left: 2px solid color-mix(in srgb, var(--brand) 55%, transparent);
+  transform: translate3d(0, var(--indicator-y, 0), 0);
+  transition:
+    transform 0.48s cubic-bezier(0.22, 1.12, 0.36, 1),
+    height 0.48s cubic-bezier(0.22, 1.12, 0.36, 1),
+    opacity 0.2s ease;
+  will-change: transform, height;
+}
+
+.inbox-indicator--lifted {
+  transform: translate3d(0, calc(var(--indicator-y, 0) - 2px), 0) scaleY(1.015);
+  filter: brightness(1.04);
+}
+
+.nav-item-active {
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
+}
+
+.nav-item-label-active {
+  animation: nav-label-in 0.38s cubic-bezier(0.34, 1.1, 0.64, 1) both;
+}
+
+@keyframes nav-label-in {
+  from {
+    opacity: 0.7;
+    transform: translateY(2px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes tab-panel-in-forward {
+  from {
+    opacity: 0;
+    transform: translateX(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes tab-panel-in-back {
+  from {
+    opacity: 0;
+    transform: translateX(-14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes header-title-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.tab-panel-enter-forward {
+  animation: tab-panel-in-forward 0.34s cubic-bezier(0.4, 0, 0.2, 1) both;
+}
+
+.tab-panel-enter-back {
+  animation: tab-panel-in-back 0.34s cubic-bezier(0.4, 0, 0.2, 1) both;
+}
+
+.header-title-enter {
+  animation: header-title-in 0.28s cubic-bezier(0.4, 0, 0.2, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .login-card {
+    animation: none;
+  }
+
+  .inbox-indicator {
+    transition: none;
+  }
+
+  .nav-indicator {
+    transition: none;
+  }
+
+  .nav-item-label-active {
+    animation: none;
+  }
+
+  .tab-panel-enter-forward,
+  .tab-panel-enter-back,
+  .header-title-enter {
+    animation: none;
+  }
+}

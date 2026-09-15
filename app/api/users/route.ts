@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAdmin } from "@/lib/auth";
+import { requireAdmin, requireSession } from "@/lib/auth";
 import { createUser, listUsers } from "@/lib/db/users";
 
 export async function GET() {
   try {
-    await requireAdmin();
+    await requireSession();
     const users = await listUsers();
     return NextResponse.json({ users });
   } catch (err) {
