@@ -1,14 +1,21 @@
 "use client";
 
-import { useRouter } from "next/navigation";
-import { useRef, useState } from "react";
+import { usePathname, useRouter } from "next/navigation";
+import { useEffect, useRef, useState } from "react";
 import CallPanel from "@/components/CallPanel";
 import ChatApp from "@/components/ChatApp";
 import Sidebar, { type NavTab } from "@/components/Sidebar";
 import TabPanel from "@/components/TabPanel";
 import { VoiceCallProvider } from "@/components/VoiceCallProvider";
+import InvoiceGenerator from "@/components/InvoiceGenerator";
 import UserManagement from "@/components/UserManagement";
 import { parsePhoneNumbersFromFile } from "@/lib/csv";
+import {
+  isAdminTab,
+  pathnameToTab,
+  TAB_ORDER,
+  tabToPath,
+} from "@/lib/navigation";
 import { normalizePhone } from "@/lib/phone";
 
 export interface CurrentUser {
@@ -33,12 +40,12 @@ interface DashboardProps {
 const inputClass =
   "w-full rounded-xl border border-border bg-white px-4 py-2.5 text-sm text-foreground placeholder:text-zinc-400 focus:border-brand focus:ring-2 focus:ring-brand/20";
 
-const TAB_ORDER: NavTab[] = ["messages", "calls", "bulk", "team"];
-
 export default function Dashboard({ initialUser }: DashboardProps) {
   const router = useRouter();
+  const pathname = usePathname();
   const user = initialUser;
-  const [activeTab, setActiveTab] = useState<NavTab>("messages");
+  const activeTab = pathnameToTab(pathname) ?? "messages";
+  const prevTabRef = useRef(activeTab);
   const [tabDirection, setTabDirection] = useState(0);
   const [callPrefillPhone, setCallPrefillPhone] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -129,13 +136,31 @@ export default function Dashboard({ initialUser }: DashboardProps) {
     calls: "Live Calls",
     bulk: "Bulk Send",
     team: isAdmin ? "Team Management" : "Teams",
+    invoices: "Invoice Generator",
   };
 
+  useEffect(() => {
+    if (pathnameToTab(pathname) === null) {
+      router.replace("/messages");
+      return;
+    }
+
+    if (!isAdmin && isAdminTab(activeTab)) {
+      router.replace("/messages");
+      return;
+    }
+
+    const prevIndex = TAB_ORDER.indexOf(prevTabRef.current);
+    const nextIndex = TAB_ORDER.indexOf(activeTab);
+    if (prevTabRef.current !== activeTab) {
+      setTabDirection(nextIndex >= prevIndex ? 1 : -1);
+      prevTabRef.current = activeTab;
+    }
+  }, [activeTab, isAdmin, pathname, router]);
+
   const handleTabChange = (tab: NavTab) => {
-    const prevIndex = TAB_ORDER.indexOf(activeTab);
-    const nextIndex = TAB_ORDER.indexOf(tab);
-    setTabDirection(nextIndex >= prevIndex ? 1 : -1);
-    setActiveTab(tab);
+    if (tab === activeTab) return;
+    router.push(tabToPath(tab));
   };
 
   return (
@@ -321,6 +346,17 @@ export default function Dashboard({ initialUser }: DashboardProps) {
                 <UserManagement canInvite={isAdmin} />
               </div>
             </TabPanel>
+
+            {isAdmin && (
+              <TabPanel
+                activeTab={activeTab}
+                tab="invoices"
+                direction={tabDirection}
+                className="overflow-y-auto p-6"
+              >
+                <InvoiceGenerator />
+              </TabPanel>
+            )}
           </div>
         </div>
       </div>

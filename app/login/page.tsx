@@ -76,7 +76,7 @@ function LoginForm() {
         return;
       }
 
-      const redirectTo = searchParams.get("from") || "/";
+      const redirectTo = searchParams.get("from") || "/messages";
       router.push(redirectTo);
       router.refresh();
     } catch {
