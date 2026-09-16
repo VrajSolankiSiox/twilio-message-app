@@ -87,7 +87,7 @@ function LoginForm() {
   };
 
   return (
-    <div className="login-page relative flex min-h-full overflow-hidden">
+    <div className="login-page relative flex min-h-dvh overflow-y-auto">
       <div className="login-page__glow login-page__glow--one" aria-hidden />
       <div className="login-page__glow login-page__glow--two" aria-hidden />
 

@@ -25,7 +25,11 @@ export default function Logo({
       width={Math.round(h * 3.2)}
       height={h}
       className={`object-contain object-left ${useStacked ? "h-auto w-full max-w-[160px]" : "h-auto max-w-full"}`}
-      style={{ height: h, width: "auto", maxWidth: useStacked ? 160 : showText ? 96 : undefined }}
+      style={{
+        height: h,
+        width: "auto",
+        maxWidth: useStacked ? 160 : showText ? 96 : undefined,
+      }}
       priority
     />
   );
@@ -36,10 +40,12 @@ export default function Logo({
 
   const text = (
     <div className={useStacked ? "min-w-0" : "min-w-0 flex-1"}>
-      <p className="text-sm font-semibold leading-tight text-foreground">
+      {/* <p className="text-sm font-semibold leading-tight text-foreground">
         SMS Portal
+      </p> */}
+      <p className="text-xs leading-snug font-semibold text-zinc-500">
+        RevenelX Communications
       </p>
-      <p className="text-xs leading-snug text-zinc-500">RevenelX Communications</p>
     </div>
   );
 

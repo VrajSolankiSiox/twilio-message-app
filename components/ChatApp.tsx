@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import ConversationList from "@/components/ConversationList";
 import LiveCallBar from "@/components/LiveCallBar";
 import { useVoiceCall } from "@/components/VoiceCallProvider";
+import { useIsMobile } from "@/hooks/useIsMobile";
 import type { ChatMessage, Conversation } from "@/lib/messages";
 import { formatPhoneDisplay, normalizePhone } from "@/lib/phone";
 
@@ -103,9 +104,11 @@ function addMessageToConversations(
 
 export default function ChatApp() {
   const voice = useVoiceCall();
+  const isMobile = useIsMobile();
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
   const [selectedPhone, setSelectedPhone] = useState<string | null>(null);
+  const [mobilePane, setMobilePane] = useState<"list" | "chat">("list");
   const [replyText, setReplyText] = useState("");
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
@@ -178,6 +181,8 @@ export default function ChatApp() {
         ) {
           return prev;
         }
+        const isMobileView = window.matchMedia("(max-width: 1023px)").matches;
+        if (isMobileView) return null;
         return data.conversations[0]?.phone ?? null;
       });
     } catch {
@@ -200,6 +205,21 @@ export default function ChatApp() {
     const interval = setInterval(fetchConversations, 5000);
     return () => clearInterval(interval);
   }, [fetchConversations]);
+
+  useEffect(() => {
+    if (!isMobile && conversations.length > 0 && !selectedPhone) {
+      setSelectedPhone(conversations[0].phone);
+    }
+  }, [isMobile, conversations, selectedPhone]);
+
+  const handleSelectConversation = (phone: string) => {
+    setSelectedPhone(phone);
+    if (isMobile) setMobilePane("chat");
+  };
+
+  const handleBackToList = () => {
+    setMobilePane("list");
+  };
 
   useEffect(() => {
     shouldAutoScrollRef.current = true;
@@ -288,7 +308,7 @@ export default function ChatApp() {
   return (
     <div className="flex h-full min-h-0 w-full flex-col overflow-hidden bg-surface">
       {/* Toolbar */}
-      <div className="flex shrink-0 flex-wrap items-center gap-4 border-b border-border bg-brand-muted/30 px-5 py-3">
+      <div className="flex shrink-0 flex-wrap items-center gap-3 border-b border-border bg-brand-muted/30 px-4 py-2.5 sm:gap-4 sm:px-5 sm:py-3">
         <span className="text-xs font-semibold uppercase tracking-wider text-brand">
           Filters
         </span>
@@ -315,8 +335,12 @@ export default function ChatApp() {
       {/* Main chat layout */}
       <div className="flex min-h-0 flex-1 overflow-hidden">
         {/* Conversation list */}
-        <div className="flex w-80 shrink-0 flex-col overflow-hidden border-r border-border">
-          <div className="shrink-0 border-b border-border px-5 py-4">
+        <div
+          className={`flex w-full shrink-0 flex-col overflow-hidden border-r border-border lg:w-80 ${
+            mobilePane === "chat" ? "hidden lg:flex" : "flex"
+          }`}
+        >
+          <div className="shrink-0 border-b border-border px-4 py-3 sm:px-5 sm:py-4">
             <h2 className="text-sm font-semibold text-foreground">Inbox</h2>
             <p className="text-xs text-zinc-400">
               {conversations.length} conversations
@@ -327,29 +351,55 @@ export default function ChatApp() {
             conversations={conversations}
             selectedPhone={selectedPhone}
             loading={loading}
-            onSelect={setSelectedPhone}
+            onSelect={handleSelectConversation}
             formatTime={formatTime}
             getInitials={getInitials}
           />
         </div>
 
         {/* Chat panel */}
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <div
+          className={`min-h-0 min-w-0 flex-1 flex-col ${
+            mobilePane === "list" ? "hidden lg:flex" : "flex"
+          }`}
+        >
           {selectedConversation ? (
             <>
               {/* Chat header */}
-              <div className="flex shrink-0 items-center justify-between border-b border-border bg-surface px-6 py-4">
-                <div>
-                  <p className="text-base font-semibold text-foreground">
-                    {formatPhoneDisplay(selectedConversation.phone)}
-                  </p>
-                  <p className="text-xs text-zinc-400">
-                    {selectedConversation.assignedToName
-                      ? `Assigned to ${selectedConversation.assignedToName}`
-                      : "Unassigned — reply to claim"}
-                  </p>
+              <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border bg-surface px-4 py-3 sm:px-6 sm:py-4">
+                <div className="flex min-w-0 items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleBackToList}
+                    className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-zinc-600 transition-colors hover:bg-brand-light lg:hidden"
+                    aria-label="Back to inbox"
+                  >
+                    <svg
+                      className="h-5 w-5"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M15 19l-7-7 7-7"
+                      />
+                    </svg>
+                  </button>
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-semibold text-foreground sm:text-base">
+                      {formatPhoneDisplay(selectedConversation.phone)}
+                    </p>
+                    <p className="truncate text-xs text-zinc-400">
+                      {selectedConversation.assignedToName
+                        ? `Assigned to ${selectedConversation.assignedToName}`
+                        : "Unassigned — reply to claim"}
+                    </p>
+                  </div>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
                   {currentUser && (
                     <button
                       type="button"
@@ -382,7 +432,7 @@ export default function ChatApp() {
                       Call
                     </button>
                   )}
-                  <span className="rounded-full bg-brand-muted px-3 py-1 text-xs font-medium text-brand">
+                  <span className="hidden rounded-full bg-brand-muted px-3 py-1 text-xs font-medium text-brand sm:inline">
                     {selectedConversation.messages.length} messages
                   </span>
                 </div>
@@ -392,7 +442,7 @@ export default function ChatApp() {
               <div
                 ref={messagesContainerRef}
                 onScroll={handleMessagesScroll}
-                className="min-h-0 flex-1 overflow-y-auto bg-[#f9f8fd] px-6 py-5"
+                className="min-h-0 flex-1 overflow-y-auto bg-[#f9f8fd] px-4 py-4 sm:px-6 sm:py-5"
               >
                 <div className="w-full space-y-1">
                   {selectedConversation.messages.map((msg, idx) => {
@@ -453,9 +503,9 @@ export default function ChatApp() {
               {canReply ? (
                 <form
                   onSubmit={handleSendReply}
-                  className="shrink-0 border-t border-border bg-surface px-6 py-4"
+                  className="shrink-0 border-t border-border bg-surface px-4 py-3 sm:px-6 sm:py-4"
                 >
-                  <div className="flex w-full items-end gap-3">
+                  <div className="flex w-full items-end gap-2 sm:gap-3">
                     <textarea
                       value={replyText}
                       onChange={(e) => setReplyText(e.target.value)}
@@ -465,7 +515,7 @@ export default function ChatApp() {
                           handleSendReply(e);
                         }
                       }}
-                      placeholder="Type a message… (Enter to send, Shift+Enter for new line)"
+                      placeholder="Type a message…"
                       disabled={sending}
                       rows={1}
                       className="max-h-32 min-h-[44px] flex-1 resize-none rounded-xl border border-border bg-background px-4 py-3 text-sm text-foreground placeholder:text-zinc-400 focus:border-brand focus:ring-2 focus:ring-brand/20 disabled:opacity-50"
@@ -496,7 +546,7 @@ export default function ChatApp() {
                   </div>
                 </form>
               ) : (
-                <div className="shrink-0 border-t border-border bg-brand-muted/30 px-6 py-4 text-center text-sm text-zinc-500">
+                <div className="shrink-0 border-t border-border bg-brand-muted/30 px-4 py-3 text-center text-sm text-zinc-500 sm:px-6 sm:py-4">
                   Assigned to {selectedConversation.assignedToName}
                 </div>
               )}

@@ -82,7 +82,7 @@ export default function UserManagement({ canInvite = false }: UserManagementProp
   return (
     <div className="space-y-6">
       {canInvite && (
-        <section className="rounded-2xl border border-border bg-surface p-6 shadow-sm">
+        <section className="rounded-2xl border border-border bg-surface p-4 shadow-sm sm:p-6">
           <h2 className="mb-1 text-sm font-semibold uppercase tracking-wide text-brand">
             Invite
           </h2>
@@ -162,7 +162,7 @@ export default function UserManagement({ canInvite = false }: UserManagementProp
         </div>
       )}
 
-      <section className="rounded-2xl border border-border bg-surface p-6 shadow-sm">
+      <section className="rounded-2xl border border-border bg-surface p-4 shadow-sm sm:p-6">
         <h2 className="mb-4 text-sm font-semibold uppercase tracking-wide text-brand">
           Team Members ({users.length})
         </h2>
@@ -176,17 +176,17 @@ export default function UserManagement({ canInvite = false }: UserManagementProp
             {users.map((user) => (
               <div
                 key={user.id}
-                className="flex items-center justify-between py-4 first:pt-0 last:pb-0"
+                className="flex flex-col gap-2 py-4 first:pt-0 last:pb-0 sm:flex-row sm:items-center sm:justify-between"
               >
-                <div className="flex items-center gap-3">
-                  <div className="flex h-9 w-9 items-center justify-center rounded-full bg-brand-light text-sm font-semibold text-brand">
+                <div className="flex min-w-0 items-center gap-3">
+                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-brand-light text-sm font-semibold text-brand">
                     {user.fullName.charAt(0).toUpperCase()}
                   </div>
-                  <div>
-                    <p className="text-sm font-medium text-foreground">
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium text-foreground">
                       {user.fullName}
                     </p>
-                    <p className="text-xs text-zinc-400">{user.email}</p>
+                    <p className="truncate text-xs text-zinc-400">{user.email}</p>
                   </div>
                 </div>
                 <span

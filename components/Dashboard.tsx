@@ -4,6 +4,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import CallPanel from "@/components/CallPanel";
 import ChatApp from "@/components/ChatApp";
+import MobileNav from "@/components/MobileNav";
 import Sidebar, { type NavTab } from "@/components/Sidebar";
 import TabPanel from "@/components/TabPanel";
 import { VoiceCallProvider } from "@/components/VoiceCallProvider";
@@ -165,7 +166,7 @@ export default function Dashboard({ initialUser }: DashboardProps) {
 
   return (
     <VoiceCallProvider>
-      <div className="flex h-screen overflow-hidden bg-background">
+      <div className="flex h-dvh overflow-hidden bg-background">
         <Sidebar
           activeTab={activeTab}
           onTabChange={handleTabChange}
@@ -174,14 +175,41 @@ export default function Dashboard({ initialUser }: DashboardProps) {
           onLogout={handleLogout}
         />
 
-        <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-          <header className="shrink-0 border-b border-border bg-surface px-6 py-4">
+        <div className="flex min-w-0 flex-1 flex-col overflow-hidden pb-[calc(3.5rem+env(safe-area-inset-bottom))] lg:pb-0">
+          <header className="flex shrink-0 items-center justify-between gap-3 border-b border-border bg-surface px-4 py-3 sm:px-6 sm:py-4">
             <h1
               key={activeTab}
-              className="header-title-enter text-lg font-semibold text-foreground"
+              className="header-title-enter truncate text-base font-semibold text-foreground sm:text-lg"
             >
               {pageTitles[activeTab]}
             </h1>
+            <div className="flex shrink-0 items-center gap-2 lg:hidden">
+              {user && (
+                <div className="flex h-8 w-8 items-center justify-center rounded-full bg-brand text-xs font-semibold text-white">
+                  {user.fullName.charAt(0).toUpperCase()}
+                </div>
+              )}
+              <button
+                type="button"
+                onClick={handleLogout}
+                className="flex h-8 w-8 items-center justify-center rounded-lg text-zinc-500 transition-colors hover:bg-red-50 hover:text-red-600"
+                aria-label="Logout"
+              >
+                <svg
+                  className="h-4 w-4"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"
+                  />
+                </svg>
+              </button>
+            </div>
           </header>
 
           <div className="relative min-h-0 flex-1 overflow-hidden">
@@ -198,7 +226,7 @@ export default function Dashboard({ initialUser }: DashboardProps) {
               activeTab={activeTab}
               tab="calls"
               direction={tabDirection}
-              className="overflow-hidden p-4"
+              className="overflow-hidden p-3 sm:p-4"
             >
               <CallPanel
                 prefillPhone={callPrefillPhone}
@@ -213,10 +241,10 @@ export default function Dashboard({ initialUser }: DashboardProps) {
                 activeTab={activeTab}
                 tab="bulk"
                 direction={tabDirection}
-                className="overflow-y-auto p-6"
+                className="overflow-y-auto p-4 sm:p-6"
               >
-                <div className="mx-auto max-w-3xl space-y-6">
-                  <section className="rounded-2xl border border-border bg-surface p-6 shadow-sm">
+                <div className="mx-auto max-w-3xl space-y-4 sm:space-y-6">
+                  <section className="rounded-2xl border border-border bg-surface p-4 shadow-sm sm:p-6">
                     <h2 className="mb-1 text-sm font-semibold uppercase tracking-wide text-brand">
                       Step 1
                     </h2>
@@ -257,7 +285,7 @@ export default function Dashboard({ initialUser }: DashboardProps) {
                     )}
                   </section>
 
-                  <section className="rounded-2xl border border-border bg-surface p-6 shadow-sm">
+                  <section className="rounded-2xl border border-border bg-surface p-4 shadow-sm sm:p-6">
                     <h2 className="mb-1 text-sm font-semibold uppercase tracking-wide text-brand">
                       Step 2
                     </h2>
@@ -276,7 +304,7 @@ export default function Dashboard({ initialUser }: DashboardProps) {
                     </p>
                   </section>
 
-                  <div className="flex gap-3">
+                  <div className="flex flex-col gap-3 sm:flex-row">
                     <button
                       onClick={handleSend}
                       disabled={
@@ -340,7 +368,7 @@ export default function Dashboard({ initialUser }: DashboardProps) {
               activeTab={activeTab}
               tab="team"
               direction={tabDirection}
-              className="overflow-y-auto p-6"
+              className="overflow-y-auto p-4 sm:p-6"
             >
               <div className="mx-auto max-w-3xl">
                 <UserManagement canInvite={isAdmin} />
@@ -352,13 +380,19 @@ export default function Dashboard({ initialUser }: DashboardProps) {
                 activeTab={activeTab}
                 tab="invoices"
                 direction={tabDirection}
-                className="overflow-y-auto p-6"
+                className="overflow-y-auto p-4 sm:p-6"
               >
                 <InvoiceGenerator />
               </TabPanel>
             )}
           </div>
         </div>
+
+        <MobileNav
+          activeTab={activeTab}
+          isAdmin={isAdmin}
+          onTabChange={handleTabChange}
+        />
       </div>
     </VoiceCallProvider>
   );

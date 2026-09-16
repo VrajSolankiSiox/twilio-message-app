@@ -25,7 +25,7 @@ function Section({
   children: React.ReactNode;
 }) {
   return (
-    <section className="rounded-2xl border border-border bg-surface p-6 shadow-sm">
+    <section className="rounded-2xl border border-border bg-surface p-4 shadow-sm sm:p-6">
       <h2 className="mb-4 text-sm font-semibold uppercase tracking-wide text-brand">
         {title}
       </h2>
@@ -385,14 +385,14 @@ export default function InvoiceGenerator() {
         </div>
       </Section>
 
-      <div className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-border bg-surface p-6 shadow-sm">
+      <div className="flex flex-col gap-4 rounded-2xl border border-border bg-surface p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between sm:p-6">
         <div>
           <p className="text-sm text-zinc-500">Total due</p>
           <p className="text-2xl font-bold text-foreground">
             {formatCurrency(total)}
           </p>
         </div>
-        <div className="flex gap-3">
+        <div className="flex flex-col gap-3 sm:flex-row">
           <button
             type="button"
             onClick={() => setForm(defaultInvoiceData)}

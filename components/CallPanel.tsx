@@ -95,10 +95,10 @@ export default function CallPanel({ prefillPhone, currentUser }: CallPanelProps)
   const isBusy = voice.isInCall || voice.callState === "initializing";
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-4 overflow-hidden">
-      <div className="flex min-h-0 flex-1 gap-4 overflow-hidden">
-        <div className="flex w-[420px] shrink-0 flex-col gap-4 overflow-y-auto pr-1">
-          <section className="rounded-2xl border border-border bg-surface p-5 shadow-sm">
+    <div className="flex h-full min-h-0 flex-col gap-3 overflow-hidden sm:gap-4">
+      <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden lg:flex-row lg:gap-4">
+        <div className="flex w-full shrink-0 flex-col gap-4 overflow-y-auto lg:w-[420px] lg:pr-1">
+          <section className="rounded-2xl border border-border bg-surface p-4 shadow-sm sm:p-5">
             <h2 className="mb-1 text-sm font-semibold uppercase tracking-wide text-brand">
               Live Call
             </h2>
@@ -154,8 +154,8 @@ export default function CallPanel({ prefillPhone, currentUser }: CallPanelProps)
           </section>
         </div>
 
-        <section className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border border-border bg-surface shadow-sm">
-          <div className="shrink-0 border-b border-border px-5 py-4">
+        <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border border-border bg-surface shadow-sm">
+          <div className="shrink-0 border-b border-border px-4 py-3 sm:px-5 sm:py-4">
             <h2 className="text-sm font-semibold text-foreground">Call History</h2>
             <p className="text-xs text-zinc-400">Recent live outbound calls</p>
           </div>
@@ -176,7 +176,7 @@ export default function CallPanel({ prefillPhone, currentUser }: CallPanelProps)
             {calls.map((call) => (
               <div
                 key={call.sid}
-                className="flex items-start gap-4 border-b border-border/60 px-5 py-4"
+                className="flex items-start gap-3 border-b border-border/60 px-4 py-3 sm:gap-4 sm:px-5 sm:py-4"
               >
                 <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-brand-muted text-brand">
                   <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">

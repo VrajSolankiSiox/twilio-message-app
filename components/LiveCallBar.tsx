@@ -52,8 +52,8 @@ export default function LiveCallBar({
   if (!inCall && !error) return null;
 
   return (
-    <div className="shrink-0 border-t border-brand/20 bg-brand-muted/40 px-6 py-4">
-      <div className="mx-auto flex max-w-2xl items-center justify-between gap-4">
+    <div className="shrink-0 border-t border-brand/20 bg-brand-muted/40 px-4 py-3 sm:px-6 sm:py-4">
+      <div className="mx-auto flex max-w-2xl flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
         <div className="min-w-0">
           {activeNumber && (
             <p className="truncate text-sm font-semibold text-foreground">
@@ -71,7 +71,7 @@ export default function LiveCallBar({
         </div>
 
         {inCall && (
-          <div className="flex shrink-0 items-center gap-2">
+          <div className="flex shrink-0 items-center justify-end gap-2">
             {callState === "connected" && (
               <button
                 type="button"
