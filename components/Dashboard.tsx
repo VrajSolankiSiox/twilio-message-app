@@ -10,7 +10,7 @@ import TabPanel from "@/components/TabPanel";
 import { VoiceCallProvider } from "@/components/VoiceCallProvider";
 import InvoiceGenerator from "@/components/InvoiceGenerator";
 import UserManagement from "@/components/UserManagement";
-import { parsePhoneNumbersFromFile } from "@/lib/csv";
+import { parseContactsFromFile, type CsvContact } from "@/lib/csv";
 import {
   isAdminTab,
   pathnameToTab,
@@ -51,7 +51,7 @@ export default function Dashboard({ initialUser }: DashboardProps) {
   const [callPrefillPhone, setCallPrefillPhone] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [message, setMessage] = useState("");
-  const [phoneNumbers, setPhoneNumbers] = useState<string[]>([]);
+  const [contacts, setContacts] = useState<CsvContact[]>([]);
   const [fileName, setFileName] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const [results, setResults] = useState<SendResult[] | null>(null);
@@ -64,17 +64,30 @@ export default function Dashboard({ initialUser }: DashboardProps) {
     setError(null);
     setResults(null);
 
-    const numbers = await parsePhoneNumbersFromFile(file);
+    const parsed = await parseContactsFromFile(file);
 
-    if (numbers.length === 0) {
+    if (parsed.length === 0) {
       setError("No phone numbers found in the second column.");
-      setPhoneNumbers([]);
+      setContacts([]);
       setFileName(null);
       return;
     }
 
-    setPhoneNumbers(numbers);
+    setContacts(parsed);
     setFileName(file.name);
+
+    const namedContacts = parsed.filter((contact) => contact.name);
+    if (namedContacts.length > 0) {
+      try {
+        await fetch("/api/contacts", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ contacts: namedContacts }),
+        });
+      } catch {
+        // Names will still be saved when messages are sent.
+      }
+    }
   };
 
   const handleSend = async () => {
@@ -82,7 +95,7 @@ export default function Dashboard({ initialUser }: DashboardProps) {
       setError("Please enter a message.");
       return;
     }
-    if (phoneNumbers.length === 0) {
+    if (contacts.length === 0) {
       setError("Please upload a CSV with phone numbers.");
       return;
     }
@@ -92,10 +105,20 @@ export default function Dashboard({ initialUser }: DashboardProps) {
     setResults(null);
 
     try {
+      const contactNames = Object.fromEntries(
+        contacts
+          .filter((contact) => contact.name)
+          .map((contact) => [contact.phone, contact.name])
+      );
+
       const res = await fetch("/api/send?bulk=true", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message, phoneNumbers }),
+        body: JSON.stringify({
+          message,
+          phoneNumbers: contacts.map((contact) => contact.phone),
+          contactNames,
+        }),
       });
 
       const data = await res.json();
@@ -114,7 +137,7 @@ export default function Dashboard({ initialUser }: DashboardProps) {
   };
 
   const handleClear = () => {
-    setPhoneNumbers([]);
+    setContacts([]);
     setFileName(null);
     setMessage("");
     setResults(null);
@@ -249,7 +272,7 @@ export default function Dashboard({ initialUser }: DashboardProps) {
                       Step 1
                     </h2>
                     <p className="mb-4 text-base font-medium text-foreground">
-                      Import phone numbers
+                      Import contacts
                     </p>
                     <div
                       className="flex cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-brand/30 bg-brand-muted/50 px-6 py-12 transition-colors hover:border-brand hover:bg-brand-light"
@@ -259,7 +282,8 @@ export default function Dashboard({ initialUser }: DashboardProps) {
                         {fileName ? fileName : "Click to upload CSV or Excel file"}
                       </p>
                       <p className="mt-1 text-xs text-zinc-500">
-                        Phone numbers in the second column (.csv, .xlsx, .xls)
+                        Names in the first column, phone numbers in the second
+                        (.csv, .xlsx, .xls)
                       </p>
                     </div>
                     <input
@@ -270,15 +294,31 @@ export default function Dashboard({ initialUser }: DashboardProps) {
                       onChange={handleFileChange}
                     />
 
-                    {phoneNumbers.length > 0 && (
+                    {contacts.length > 0 && (
                       <div className="mt-4 rounded-xl bg-brand-muted p-4">
                         <p className="mb-2 text-sm font-medium text-brand">
-                          {phoneNumbers.length} number
-                          {phoneNumbers.length !== 1 && "s"} loaded
+                          {contacts.length} contact
+                          {contacts.length !== 1 && "s"} loaded
                         </p>
-                        <ul className="max-h-36 space-y-1 overflow-y-auto text-sm font-mono text-zinc-600">
-                          {phoneNumbers.map((num, i) => (
-                            <li key={i}>{normalizePhone(num)}</li>
+                        <ul className="max-h-36 space-y-1 overflow-y-auto text-sm text-zinc-600">
+                          {contacts.map((contact, i) => (
+                            <li key={i}>
+                              {contact.name ? (
+                                <>
+                                  <span className="font-medium text-foreground">
+                                    {contact.name}
+                                  </span>
+                                  <span className="font-mono text-zinc-500">
+                                    {" "}
+                                    {normalizePhone(contact.phone)}
+                                  </span>
+                                </>
+                              ) : (
+                                <span className="font-mono">
+                                  {normalizePhone(contact.phone)}
+                                </span>
+                              )}
+                            </li>
                           ))}
                         </ul>
                       </div>
@@ -308,13 +348,13 @@ export default function Dashboard({ initialUser }: DashboardProps) {
                     <button
                       onClick={handleSend}
                       disabled={
-                        sending || phoneNumbers.length === 0 || !message.trim()
+                        sending || contacts.length === 0 || !message.trim()
                       }
                       className="flex-1 rounded-xl bg-brand px-6 py-3 text-sm font-semibold text-white transition-colors hover:bg-brand-hover disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       {sending
-                        ? `Sending to ${phoneNumbers.length} numbers...`
-                        : `Send to ${phoneNumbers.length || 0} numbers`}
+                        ? `Sending to ${contacts.length} numbers...`
+                        : `Send to ${contacts.length || 0} numbers`}
                     </button>
                     <button
                       onClick={handleClear}

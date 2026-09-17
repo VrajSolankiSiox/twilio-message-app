@@ -1,7 +1,11 @@
 "use client";
 
 import { useCallback, useLayoutEffect, useRef, useState } from "react";
-import type { Conversation } from "@/lib/messages";
+import {
+  conversationInitials,
+  conversationLabel,
+  type Conversation,
+} from "@/lib/messages";
 import { formatPhoneDisplay, normalizePhone } from "@/lib/phone";
 
 interface IndicatorStyle {
@@ -16,7 +20,6 @@ interface ConversationListProps {
   loading: boolean;
   onSelect: (phone: string) => void;
   formatTime: (dateStr: string) => string;
-  getInitials: (phone: string) => string;
 }
 
 export default function ConversationList({
@@ -25,7 +28,6 @@ export default function ConversationList({
   loading,
   onSelect,
   formatTime,
-  getInitials,
 }: ConversationListProps) {
   const listRef = useRef<HTMLDivElement>(null);
   const itemRefs = useRef<Record<string, HTMLButtonElement>>({});
@@ -192,7 +194,7 @@ export default function ConversationList({
                   : "bg-brand-muted/80 text-brand"
               }`}
             >
-              {getInitials(conv.phone)}
+              {conversationInitials(conv)}
             </div>
             <div className="min-w-0 flex-1">
               <div className="flex items-baseline justify-between gap-2">
@@ -203,12 +205,21 @@ export default function ConversationList({
                       : "font-medium text-zinc-700"
                   }`}
                 >
-                  {formatPhoneDisplay(conv.phone)}
+                  {conversationLabel(conv)}
                 </p>
                 <time className="shrink-0 text-[10px] text-zinc-400">
                   {formatTime(conv.lastMessageAt)}
                 </time>
               </div>
+              {conv.contactName?.trim() ? (
+                <p
+                  className={`mt-0.5 truncate font-mono text-[11px] transition-colors duration-200 ${
+                    isHighlighted ? "text-zinc-500" : "text-zinc-400"
+                  }`}
+                >
+                  {formatPhoneDisplay(conv.phone)}
+                </p>
+              ) : null}
               <p
                 className={`mt-0.5 truncate text-xs transition-colors duration-200 ${
                   isHighlighted ? "text-zinc-600" : "text-zinc-500"

@@ -1,4 +1,4 @@
-import { normalizePhone } from "./phone";
+import { formatPhoneDisplay, normalizePhone } from "./phone";
 
 export interface ChatMessage {
   sid: string;
@@ -13,6 +13,7 @@ export interface ChatMessage {
 
 export interface Conversation {
   phone: string;
+  contactName: string | null;
   messages: ChatMessage[];
   lastMessage: string;
   lastMessageAt: string;
@@ -24,10 +25,28 @@ export interface Conversation {
   isBlank: boolean;
 }
 
+export function conversationLabel(conversation: Conversation): string {
+  const name = conversation.contactName?.trim();
+  return name || formatPhoneDisplay(conversation.phone);
+}
+
+export function conversationInitials(conversation: Conversation): string {
+  const name = conversation.contactName?.trim();
+  if (name) {
+    const parts = name.split(/\s+/).filter(Boolean);
+    if (parts.length >= 2) {
+      return `${parts[0][0]}${parts[parts.length - 1][0]}`.toUpperCase();
+    }
+    return name.slice(0, 2).toUpperCase();
+  }
+  return conversation.phone.replace(/\D/g, "").slice(-2);
+}
+
 export function buildConversations(
   messages: ChatMessage[],
   assignments: Array<{
     phone: string;
+    contactName?: string | null;
     assignedToUserId: string | null;
     assignedToName: string | null;
     assignedToEmail: string | null;
@@ -59,6 +78,7 @@ export function buildConversations(
 
       const conv: Conversation = {
         phone,
+        contactName: assignment?.contactName?.trim() || null,
         messages: sorted,
         lastMessage: last.body || "(media)",
         lastMessageAt: last.dateCreated,

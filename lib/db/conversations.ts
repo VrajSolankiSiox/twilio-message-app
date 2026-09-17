@@ -3,6 +3,7 @@ import { normalizePhone } from "@/lib/phone";
 
 export interface ConversationAssignment {
   phone: string;
+  contactName: string | null;
   assignedToUserId: string | null;
   assignedToName: string | null;
   assignedToEmail: string | null;
@@ -47,6 +48,7 @@ export async function ensureConversationExists(phone: string): Promise<void> {
     {
       $setOnInsert: {
         phone: normalized,
+        contactName: null,
         assignedToUserId: null,
         assignedToName: null,
         assignedToEmail: null,
@@ -94,4 +96,42 @@ export async function assignConversation(
     throw new Error("Failed to assign conversation");
   }
   return updated;
+}
+
+export async function upsertContactNames(
+  contacts: Array<{ phone: string; name: string }>
+): Promise<void> {
+  await ensureIndexes();
+
+  const ops = contacts
+    .map((contact) => {
+      const name = contact.name.trim();
+      if (!name) return null;
+
+      const phone = normalizePhone(contact.phone);
+      const now = new Date();
+
+      return {
+        updateOne: {
+          filter: { phone },
+          update: {
+            $set: { contactName: name, updatedAt: now },
+            $setOnInsert: {
+              phone,
+              assignedToUserId: null,
+              assignedToName: null,
+              assignedToEmail: null,
+              assignedAt: null,
+            },
+          },
+          upsert: true,
+        },
+      };
+    })
+    .filter((op): op is NonNullable<typeof op> => op !== null);
+
+  if (ops.length === 0) return;
+
+  const db = await getDb();
+  await db.collection<ConversationAssignment>("conversations").bulkWrite(ops);
 }

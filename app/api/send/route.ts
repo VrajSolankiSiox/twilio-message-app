@@ -6,6 +6,7 @@ import {
   ensureConversationExists,
   getAllAssignments,
   getAssignment,
+  upsertContactNames,
 } from "@/lib/db/conversations";
 import { getAllMessages, saveMessage } from "@/lib/db/messages";
 import { buildConversations, canUserReplyToConversation } from "@/lib/messages";
@@ -29,7 +30,7 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const { message, phoneNumbers } = await request.json();
+    const { message, phoneNumbers, contactNames } = await request.json();
 
     if (!message?.trim()) {
       return NextResponse.json(
@@ -85,6 +86,25 @@ export async function POST(request: NextRequest) {
           { status: 403 }
         );
       }
+    }
+
+    const nameByPhone = new Map<string, string>();
+    if (contactNames && typeof contactNames === "object" && !Array.isArray(contactNames)) {
+      for (const [rawPhone, rawName] of Object.entries(
+        contactNames as Record<string, unknown>
+      )) {
+        if (typeof rawName !== "string" || !rawName.trim()) continue;
+        nameByPhone.set(normalizePhone(rawPhone), rawName.trim());
+      }
+    }
+
+    if (nameByPhone.size > 0) {
+      await upsertContactNames(
+        Array.from(nameByPhone.entries()).map(([phone, name]) => ({
+          phone,
+          name,
+        }))
+      );
     }
 
     const client = twilio(accountSid, authToken);

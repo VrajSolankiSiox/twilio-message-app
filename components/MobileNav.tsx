@@ -28,6 +28,12 @@ export default function MobileNav({
 }: MobileNavProps) {
   const navRef = useRef<HTMLDivElement>(null);
   const itemRefs = useRef<Partial<Record<NavTab, HTMLButtonElement>>>({});
+  const prevTabRef = useRef<NavTab | null>(null);
+
+  const [motionKey, setMotionKey] = useState(0);
+  const [travelDirection, setTravelDirection] = useState<"left" | "right" | null>(
+    null
+  );
 
   const [target, setTarget] = useState<IndicatorTarget>({
     left: 0,
@@ -76,6 +82,15 @@ export default function MobileNav({
   );
 
   useLayoutEffect(() => {
+    if (prevTabRef.current !== null && prevTabRef.current !== activeTab) {
+      const prevIndex = visibleItems.findIndex(
+        (item) => item.id === prevTabRef.current
+      );
+      const nextIndex = visibleItems.findIndex((item) => item.id === activeTab);
+      setTravelDirection(nextIndex >= prevIndex ? "right" : "left");
+      setMotionKey((key) => key + 1);
+    }
+    prevTabRef.current = activeTab;
     updateTarget(activeTab);
   }, [activeTab, updateTarget, visibleItems]);
 
@@ -118,6 +133,8 @@ export default function MobileNav({
           height={blobHeight}
           top={INDICATOR_INSET_Y}
           visible={indicatorReady}
+          motionKey={motionKey}
+          direction={travelDirection}
         />
 
         {visibleItems.map((item) => {

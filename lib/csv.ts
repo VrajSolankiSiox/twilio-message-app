@@ -1,30 +1,40 @@
 import * as XLSX from "xlsx";
 
+export interface CsvContact {
+  name: string;
+  phone: string;
+}
+
 function isExcelFile(buffer: ArrayBuffer): boolean {
   const bytes = new Uint8Array(buffer, 0, 4);
   return bytes[0] === 0x50 && bytes[1] === 0x4b;
 }
 
-function isHeaderValue(value: string): boolean {
+function isPhoneHeader(value: string): boolean {
   return /phone|number|mobile|tel/i.test(value);
 }
 
-function extractSecondColumn(rows: string[][]): string[] {
-  const numbers: string[] = [];
+function isNameHeader(value: string): boolean {
+  return /^(name|full.?name|contact|customer)/i.test(value);
+}
+
+function extractContacts(rows: string[][]): CsvContact[] {
+  const contacts: CsvContact[] = [];
 
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i];
     if (!row || row.length < 2) continue;
 
+    const name = String(row[0] ?? "").trim();
     const phone = String(row[1] ?? "").trim();
     if (!phone) continue;
 
-    if (i === 0 && isHeaderValue(phone)) continue;
+    if (i === 0 && (isPhoneHeader(phone) || isNameHeader(name))) continue;
 
-    numbers.push(phone);
+    contacts.push({ name, phone });
   }
 
-  return numbers;
+  return contacts;
 }
 
 function parseCSVText(content: string): string[][] {
@@ -56,14 +66,21 @@ function parseExcelBuffer(buffer: ArrayBuffer): string[][] {
   return XLSX.utils.sheet_to_json<string[]>(sheet, { header: 1, defval: "" });
 }
 
-export async function parsePhoneNumbersFromFile(
+export async function parseContactsFromFile(
   file: File
-): Promise<string[]> {
+): Promise<CsvContact[]> {
   const buffer = await file.arrayBuffer();
 
   const rows = isExcelFile(buffer)
     ? parseExcelBuffer(buffer)
     : parseCSVText(new TextDecoder().decode(buffer));
 
-  return extractSecondColumn(rows);
+  return extractContacts(rows);
+}
+
+export async function parsePhoneNumbersFromFile(
+  file: File
+): Promise<string[]> {
+  const contacts = await parseContactsFromFile(file);
+  return contacts.map((contact) => contact.phone);
 }

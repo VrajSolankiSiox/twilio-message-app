@@ -6,6 +6,7 @@ import LiveCallBar from "@/components/LiveCallBar";
 import { useVoiceCall } from "@/components/VoiceCallProvider";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import type { ChatMessage, Conversation } from "@/lib/messages";
+import { conversationLabel } from "@/lib/messages";
 import { formatPhoneDisplay, normalizePhone } from "@/lib/phone";
 
 interface CurrentUser {
@@ -48,10 +49,6 @@ function formatDateDivider(dateStr: string): string {
   });
 }
 
-function getInitials(phone: string): string {
-  return phone.replace(/\D/g, "").slice(-2);
-}
-
 function addMessageToConversations(
   conversations: Conversation[],
   message: ChatMessage,
@@ -88,6 +85,7 @@ function addMessageToConversations(
   return [
     {
       phone: normalizedContact,
+      contactName: null,
       messages: [message],
       lastMessage: message.body || "(media)",
       lastMessageAt: message.dateCreated,
@@ -353,7 +351,6 @@ export default function ChatApp() {
             loading={loading}
             onSelect={handleSelectConversation}
             formatTime={formatTime}
-            getInitials={getInitials}
           />
         </div>
 
@@ -390,12 +387,18 @@ export default function ChatApp() {
                   </button>
                   <div className="min-w-0">
                     <p className="truncate text-sm font-semibold text-foreground sm:text-base">
-                      {formatPhoneDisplay(selectedConversation.phone)}
+                      {conversationLabel(selectedConversation)}
                     </p>
                     <p className="truncate text-xs text-zinc-400">
-                      {selectedConversation.assignedToName
-                        ? `Assigned to ${selectedConversation.assignedToName}`
-                        : "Unassigned — reply to claim"}
+                      {selectedConversation.contactName?.trim()
+                        ? `${formatPhoneDisplay(selectedConversation.phone)} · ${
+                            selectedConversation.assignedToName
+                              ? `Assigned to ${selectedConversation.assignedToName}`
+                              : "Unassigned — reply to claim"
+                          }`
+                        : selectedConversation.assignedToName
+                          ? `Assigned to ${selectedConversation.assignedToName}`
+                          : "Unassigned — reply to claim"}
                     </p>
                   </div>
                 </div>
