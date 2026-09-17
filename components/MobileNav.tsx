@@ -20,6 +20,7 @@ interface IndicatorTarget {
 const INDICATOR_INSET_X = 6;
 const INDICATOR_INSET_Y = 5;
 const NAV_HEIGHT = 56;
+const DRAG_THRESHOLD = 4;
 
 export default function MobileNav({
   activeTab,
@@ -28,12 +29,20 @@ export default function MobileNav({
 }: MobileNavProps) {
   const navRef = useRef<HTMLDivElement>(null);
   const itemRefs = useRef<Partial<Record<NavTab, HTMLButtonElement>>>({});
-  const prevTabRef = useRef<NavTab | null>(null);
+  const optimisticTabRef = useRef<NavTab | null>(null);
+  const isDraggingRef = useRef(false);
+  const didDragRef = useRef(false);
+  const pointerRef = useRef<{ id: number; startX: number; armed: boolean } | null>(
+    null
+  );
 
+  const [indicatorTab, setIndicatorTab] = useState(activeTab);
   const [motionKey, setMotionKey] = useState(0);
   const [travelDirection, setTravelDirection] = useState<"left" | "right" | null>(
     null
   );
+  const [isDragging, setIsDragging] = useState(false);
+  const [previewTab, setPreviewTab] = useState<NavTab | null>(null);
 
   const [target, setTarget] = useState<IndicatorTarget>({
     left: 0,
@@ -81,24 +90,184 @@ export default function MobileNav({
     [measureTab]
   );
 
-  useLayoutEffect(() => {
-    if (prevTabRef.current !== null && prevTabRef.current !== activeTab) {
-      const prevIndex = visibleItems.findIndex(
-        (item) => item.id === prevTabRef.current
-      );
-      const nextIndex = visibleItems.findIndex((item) => item.id === activeTab);
+  const findNearestTab = useCallback(
+    (clientX: number): NavTab => {
+      let nearest = visibleItems[0].id;
+      let minDistance = Infinity;
+
+      for (const item of visibleItems) {
+        const el = itemRefs.current[item.id];
+        if (!el) continue;
+
+        const rect = el.getBoundingClientRect();
+        const center = rect.left + rect.width / 2;
+        const distance = Math.abs(clientX - center);
+
+        if (distance < minDistance) {
+          minDistance = distance;
+          nearest = item.id;
+        }
+      }
+
+      return nearest;
+    },
+    [visibleItems]
+  );
+
+  const moveIndicatorToTab = useCallback(
+    (tab: NavTab, fromTab?: NavTab) => {
+      const originTab = fromTab ?? previewTab ?? indicatorTab;
+      const prevIndex = visibleItems.findIndex((item) => item.id === originTab);
+      const nextIndex = visibleItems.findIndex((item) => item.id === tab);
+
+      if (prevIndex !== -1 && nextIndex !== -1 && prevIndex !== nextIndex) {
+        setTravelDirection(nextIndex >= prevIndex ? "right" : "left");
+      }
+
+      const next = measureTab(tab);
+      if (next) setTarget(next);
+      setPreviewTab(tab);
+      setIndicatorTab(tab);
+    },
+    [indicatorTab, measureTab, previewTab, visibleItems]
+  );
+
+  const beginIndicatorMove = useCallback(
+    (fromTab: NavTab, toTab: NavTab) => {
+      const prevIndex = visibleItems.findIndex((item) => item.id === fromTab);
+      const nextIndex = visibleItems.findIndex((item) => item.id === toTab);
+
       setTravelDirection(nextIndex >= prevIndex ? "right" : "left");
       setMotionKey((key) => key + 1);
+      setIndicatorTab(toTab);
+
+      const next = measureTab(toTab);
+      if (next) {
+        setTarget((prev) => {
+          if (
+            prev.left === next.left &&
+            prev.width === next.width &&
+            prev.opacity === next.opacity
+          ) {
+            return prev;
+          }
+          return next;
+        });
+      }
+    },
+    [measureTab, visibleItems]
+  );
+
+  const endDrag = useCallback(
+    (clientX: number) => {
+      if (!isDraggingRef.current) return;
+
+      isDraggingRef.current = false;
+      setIsDragging(false);
+      didDragRef.current = true;
+
+      const targetTab = previewTab ?? findNearestTab(clientX);
+      setPreviewTab(null);
+
+      if (targetTab !== activeTab) {
+        optimisticTabRef.current = targetTab;
+        setIndicatorTab(targetTab);
+        updateTarget(targetTab);
+        onTabChange(targetTab);
+      } else {
+        setIndicatorTab(activeTab);
+        updateTarget(activeTab);
+      }
+    },
+    [activeTab, findNearestTab, onTabChange, previewTab, updateTarget]
+  );
+
+  const handleTabClick = useCallback(
+    (tab: NavTab) => {
+      if (isDraggingRef.current || didDragRef.current) {
+        didDragRef.current = false;
+        return;
+      }
+
+      if (tab !== indicatorTab) {
+        optimisticTabRef.current = tab;
+        beginIndicatorMove(indicatorTab, tab);
+      }
+      onTabChange(tab);
+    },
+    [beginIndicatorMove, indicatorTab, onTabChange]
+  );
+
+  const handleNavPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    const targetEl = event.target as HTMLElement;
+    if (!targetEl.closest("[data-nav-item]")) return;
+
+    const tabAtPointer = findNearestTab(event.clientX);
+    if (tabAtPointer !== indicatorTab) return;
+
+    didDragRef.current = false;
+    pointerRef.current = {
+      id: event.pointerId,
+      startX: event.clientX,
+      armed: true,
+    };
+  };
+
+  const handleNavPointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
+    const pointer = pointerRef.current;
+    if (!pointer?.armed || event.pointerId !== pointer.id) return;
+
+    const delta = Math.abs(event.clientX - pointer.startX);
+
+    if (!isDraggingRef.current && delta < DRAG_THRESHOLD) return;
+
+    if (!isDraggingRef.current) {
+      isDraggingRef.current = true;
+      setIsDragging(true);
+      setPreviewTab(indicatorTab);
+      navRef.current?.setPointerCapture(event.pointerId);
     }
-    prevTabRef.current = activeTab;
-    updateTarget(activeTab);
-  }, [activeTab, updateTarget, visibleItems]);
+
+    event.preventDefault();
+    moveIndicatorToTab(findNearestTab(event.clientX));
+  };
+
+  const handleNavPointerUp = (event: React.PointerEvent<HTMLDivElement>) => {
+    const pointer = pointerRef.current;
+    if (!pointer || event.pointerId !== pointer.id) return;
+
+    pointerRef.current = null;
+
+    if (isDraggingRef.current) {
+      navRef.current?.releasePointerCapture(event.pointerId);
+      endDrag(event.clientX);
+    }
+  };
+
+  useLayoutEffect(() => {
+    if (isDraggingRef.current) return;
+
+    updateTarget(indicatorTab);
+
+    if (optimisticTabRef.current !== null) {
+      if (activeTab === optimisticTabRef.current) {
+        optimisticTabRef.current = null;
+      }
+      return;
+    }
+
+    if (activeTab !== indicatorTab) {
+      beginIndicatorMove(indicatorTab, activeTab);
+    }
+  }, [activeTab, beginIndicatorMove, indicatorTab, updateTarget]);
 
   useLayoutEffect(() => {
     const nav = navRef.current;
     if (!nav) return;
 
-    const handleResize = () => updateTarget(activeTab);
+    const handleResize = () => {
+      if (!isDraggingRef.current) updateTarget(indicatorTab);
+    };
 
     const observer = new ResizeObserver(handleResize);
     observer.observe(nav);
@@ -108,9 +277,13 @@ export default function MobileNav({
       observer.disconnect();
       window.removeEventListener("resize", handleResize);
     };
-  }, [activeTab, updateTarget]);
+  }, [indicatorTab, updateTarget]);
 
-  const highlightedTab = indicatorReady ? activeTab : null;
+  const highlightedTab = indicatorReady
+    ? isDragging && previewTab
+      ? previewTab
+      : indicatorTab
+    : null;
 
   return (
     <nav
@@ -119,8 +292,12 @@ export default function MobileNav({
     >
       <div
         ref={navRef}
-        className="relative flex h-14 items-stretch px-1.5"
+        className="relative flex h-14 touch-none items-stretch px-1.5"
         style={{ height: NAV_HEIGHT }}
+        onPointerDown={handleNavPointerDown}
+        onPointerMove={handleNavPointerMove}
+        onPointerUp={handleNavPointerUp}
+        onPointerCancel={handleNavPointerUp}
       >
         <div
           aria-hidden
@@ -135,6 +312,7 @@ export default function MobileNav({
           visible={indicatorReady}
           motionKey={motionKey}
           direction={travelDirection}
+          isDragging={isDragging}
         />
 
         {visibleItems.map((item) => {
@@ -144,13 +322,16 @@ export default function MobileNav({
             <button
               key={item.id}
               type="button"
+              data-nav-item
               ref={(el) => {
                 if (el) itemRefs.current[item.id] = el;
               }}
-              onClick={() => onTabChange(item.id)}
+              onClick={() => handleTabClick(item.id)}
               className={`relative z-10 flex min-w-0 flex-1 flex-col items-center justify-center gap-0.5 px-1 transition-colors duration-300 ${
                 highlighted
-                  ? "text-brand mobile-nav-item-active"
+                  ? `text-brand mobile-nav-item-active ${
+                      !isDragging ? "cursor-grab active:cursor-grabbing" : ""
+                    }`
                   : "text-zinc-500"
               }`}
             >

@@ -10,6 +10,7 @@ interface LiquidGlassIndicatorProps {
   visible: boolean;
   motionKey: number;
   direction: "left" | "right" | null;
+  isDragging?: boolean;
 }
 
 interface BlobState {
@@ -22,11 +23,12 @@ interface BlobState {
   trailOpacity: number;
 }
 
-type Phase = "idle" | "depart" | "travel" | "settle";
+type Phase = "idle" | "travel" | "settle";
 
 const SPRING = { stiffness: 240, damping: 32, mass: 1 };
+const DRAG_SPRING = { stiffness: 320, damping: 28, mass: 0.9 };
 const TRAIL_SPRING = { stiffness: 140, damping: 24, mass: 1.1 };
-const DEPART_MS = 90;
+const DRAG_TRAIL_SPRING = { stiffness: 200, damping: 22, mass: 0.95 };
 const SETTLE_MS = 420;
 
 const SETTLE_KEYFRAMES: { t: number; sx: number; sy: number }[] = [
@@ -75,7 +77,7 @@ function transformOriginForPhase(
   phase: Phase,
   direction: "left" | "right" | null
 ): string {
-  if (phase === "depart" || phase === "travel") {
+  if (phase === "travel") {
     return direction === "left" ? "right center" : "left center";
   }
   return "center center";
@@ -89,6 +91,7 @@ export default function LiquidGlassIndicator({
   visible,
   motionKey,
   direction,
+  isDragging = false,
 }: LiquidGlassIndicatorProps) {
   const layerRef = useRef<HTMLDivElement>(null);
   const primaryRef = useRef<HTMLDivElement>(null);
@@ -116,9 +119,12 @@ export default function LiquidGlassIndicator({
   const initializedRef = useRef(false);
   const motionKeyRef = useRef(motionKey);
   const reducedMotionRef = useRef(false);
+  const draggingRef = useRef(isDragging);
+  const prevDraggingRef = useRef(isDragging);
 
   targetRef.current = { x, w: width };
   directionRef.current = direction;
+  draggingRef.current = isDragging;
 
   useEffect(() => {
     reducedMotionRef.current = window.matchMedia(
@@ -127,19 +133,32 @@ export default function LiquidGlassIndicator({
   }, []);
 
   useEffect(() => {
+    if (isDragging && !prevDraggingRef.current) {
+      phaseRef.current = "travel";
+      phaseStartRef.current = performance.now();
+      springTargetRef.current = targetRef.current;
+      velRef.current = { ...velRef.current, sx: 0, sy: 0 };
+    } else if (!isDragging && prevDraggingRef.current) {
+      phaseRef.current = "settle";
+      phaseStartRef.current = performance.now();
+      springTargetRef.current = targetRef.current;
+      velRef.current = { ...velRef.current, sx: 0, sy: 0 };
+    }
+
+    prevDraggingRef.current = isDragging;
+  }, [isDragging]);
+
+  useEffect(() => {
     if (motionKey === motionKeyRef.current || !initializedRef.current) {
       motionKeyRef.current = motionKey;
       return;
     }
 
     motionKeyRef.current = motionKey;
-    phaseRef.current = "depart";
+    phaseRef.current = "travel";
     phaseStartRef.current = performance.now();
-    springTargetRef.current = {
-      x: stateRef.current.x,
-      w: stateRef.current.w,
-    };
-    velRef.current = { ...velRef.current, x: 0, w: 0, sx: 0, sy: 0 };
+    springTargetRef.current = targetRef.current;
+    velRef.current = { ...velRef.current, sx: 0, sy: 0 };
   }, [motionKey]);
 
   useEffect(() => {
@@ -182,9 +201,16 @@ export default function LiquidGlassIndicator({
       let phase = phaseRef.current;
       const phaseElapsed = now - phaseStartRef.current;
 
+      const isDraggingNow = draggingRef.current;
+
       let targetSx = 1;
       let targetSy = 1;
       let springTarget = springTargetRef.current;
+
+      if (isDraggingNow) {
+        phaseRef.current = "travel";
+        phase = "travel";
+      }
 
       if (reducedMotionRef.current) {
         phaseRef.current = "idle";
@@ -192,28 +218,20 @@ export default function LiquidGlassIndicator({
         springTarget = t;
         targetSx = 1;
         targetSy = 1;
-      } else if (phase === "depart") {
-        const departT = Math.min(phaseElapsed / DEPART_MS, 1);
-        const eased = easeOutCubic(departT);
-        targetSx = 1 + 0.14 * eased;
-        targetSy = 1 - 0.05 * eased;
-
-        if (departT >= 1) {
-          phaseRef.current = "travel";
-          phaseStartRef.current = now;
-          springTargetRef.current = t;
-          springTarget = t;
-          phase = "travel";
-        }
       } else if (phase === "travel") {
-        springTarget = springTargetRef.current;
-        targetSx = 1.12;
-        targetSy = 0.94;
-
+        springTarget = t;
         const dist = Math.abs(t.x - s.x);
         const speed = Math.abs(v.x);
 
-        if (dist < 2.5 && speed < 120) {
+        if (isDraggingNow) {
+          targetSx = 1.1 + Math.min(speed * 0.005 + dist * 0.0008, 0.08);
+          targetSy = 0.95 - Math.min(speed * 0.003, 0.04);
+        } else {
+          targetSx = 1.12;
+          targetSy = 0.94;
+        }
+
+        if (!isDraggingNow && dist < 2.5 && speed < 120) {
           phaseRef.current = "settle";
           phaseStartRef.current = now;
           springTargetRef.current = t;
@@ -241,8 +259,9 @@ export default function LiquidGlassIndicator({
         targetSy = 1 - Math.min(speed * 0.002 + dist * 0.0003, 0.015);
       }
 
-      const [nx, nvx] = springStep(s.x, v.x, springTarget.x, SPRING, dt);
-      const [nw, nvw] = springStep(s.w, v.w, springTarget.w, SPRING, dt);
+      const moveSpring = isDraggingNow ? DRAG_SPRING : SPRING;
+      const [nx, nvx] = springStep(s.x, v.x, springTarget.x, moveSpring, dt);
+      const [nw, nvw] = springStep(s.w, v.w, springTarget.w, moveSpring, dt);
 
       let nsx: number;
       let nsy: number;
@@ -254,37 +273,32 @@ export default function LiquidGlassIndicator({
         nsy = targetSy;
         nvsx = 0;
         nvsy = 0;
-      } else if (phase === "depart") {
-        const departT = Math.min(phaseElapsed / DEPART_MS, 1);
-        const eased = easeOutCubic(departT);
-        nsx = 1 + 0.14 * eased;
-        nsy = 1 - 0.05 * eased;
-        nvsx = 0;
-        nvsy = 0;
       } else {
-        [nsx, nvsx] = springStep(s.sx, v.sx, targetSx, TRAIL_SPRING, dt);
-        [nsy, nvsy] = springStep(s.sy, v.sy, targetSy, TRAIL_SPRING, dt);
+        const scaleSpring = isDraggingNow ? DRAG_TRAIL_SPRING : TRAIL_SPRING;
+        [nsx, nvsx] = springStep(s.sx, v.sx, targetSx, scaleSpring, dt);
+        [nsy, nvsy] = springStep(s.sy, v.sy, targetSy, scaleSpring, dt);
       }
 
-      const trailTargetX = nx + (springTarget.x - nx) * 0.35;
+      const trailTargetX = nx + (springTarget.x - nx) * (isDraggingNow ? 0.42 : 0.35);
       const trailTargetW = nw * 0.55;
       const trailTargetOpacity = Math.min(
         Math.abs(nvx) * 0.04 + Math.abs(springTarget.x - nx) * 0.0025,
         phase === "travel" ? 0.75 : 0.45
       );
 
+      const trailSpring = isDraggingNow ? DRAG_TRAIL_SPRING : TRAIL_SPRING;
       const [ntx, ntvx] = springStep(
         s.trailX,
         v.trailX,
         trailTargetX,
-        TRAIL_SPRING,
+        trailSpring,
         dt
       );
       const [ntw, ntvw] = springStep(
         s.trailW,
         v.trailW,
         trailTargetW,
-        TRAIL_SPRING,
+        trailSpring,
         dt
       );
       const [trailOpacity] = springStep(
