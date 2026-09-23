@@ -15,6 +15,7 @@ import {
   serializeCampaign,
 } from "@/lib/db/campaigns";
 import { saveMessage } from "@/lib/db/messages";
+import { getMessageStatusCallbackUrl } from "@/lib/message-status";
 
 export const maxDuration = 60;
 
@@ -93,10 +94,12 @@ export async function POST(
       if (!stillSending) break;
 
       try {
+        const statusCallback = getMessageStatusCallbackUrl();
         const msg = await client.messages.create({
           from: fromNumber,
           to: recipient.phone,
           body: claim.campaign.message,
+          ...(statusCallback && { statusCallback }),
         });
 
         await saveMessage({

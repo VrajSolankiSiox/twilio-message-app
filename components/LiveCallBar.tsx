@@ -49,7 +49,7 @@ export default function LiveCallBar({
     callState === "connected" ||
     callState === "disconnecting";
 
-  if (!inCall && !error) return null;
+  if (!inCall) return null;
 
   return (
     <div className="shrink-0 border-t border-brand/20 bg-brand-muted/40 px-4 py-3 sm:px-6 sm:py-4">

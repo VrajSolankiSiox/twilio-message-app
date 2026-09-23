@@ -25,6 +25,7 @@ interface ConversationListProps {
   onSelect: (phone: string) => void;
   onLoadMore?: () => void;
   formatTime: (dateStr: string) => string;
+  formatTimeTitle?: (dateStr: string) => string;
 }
 
 export default function ConversationList({
@@ -37,6 +38,7 @@ export default function ConversationList({
   onSelect,
   onLoadMore,
   formatTime,
+  formatTimeTitle,
 }: ConversationListProps) {
   const listRef = useRef<HTMLDivElement>(null);
   const itemRefs = useRef<Record<string, HTMLButtonElement>>({});
@@ -231,7 +233,11 @@ export default function ConversationList({
                     {conversationLabel(conv)}
                   </p>
                   <time
-                    className={`shrink-0 text-[10px] ${
+                    dateTime={conv.lastMessageAt}
+                    title={
+                      formatTimeTitle?.(conv.lastMessageAt) ?? conv.lastMessageAt
+                    }
+                    className={`shrink-0 cursor-default text-[10px] ${
                       stopWithOtherReply ? "text-emerald-700/80" : "text-zinc-400"
                     }`}
                   >

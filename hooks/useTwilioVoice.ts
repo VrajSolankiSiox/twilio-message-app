@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Call, Device } from "@twilio/voice-sdk";
+import { isTwilioVoiceNotConfiguredMessage } from "@/lib/voice-client";
 
 export type CallState =
   | "idle"
@@ -30,6 +31,9 @@ export function useTwilioVoice() {
   const [activeNumber, setActiveNumber] = useState<string | null>(null);
   const [isMuted, setIsMuted] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [voiceUnavailableHint, setVoiceUnavailableHint] = useState<
+    string | null
+  >(null);
   const [fromNumber, setFromNumber] = useState<string | null>(null);
 
   const cleanupCall = useCallback(() => {
@@ -69,7 +73,7 @@ export function useTwilioVoice() {
   }, []);
 
   const initialize = useCallback(async () => {
-    if (deviceRef.current) return;
+    if (deviceRef.current || voiceUnavailableHint) return;
 
     setCallState("initializing");
     setError(null);
@@ -101,12 +105,17 @@ export function useTwilioVoice() {
       await device.register();
       deviceRef.current = device;
     } catch (err) {
-      setError(
-        err instanceof Error ? err.message : "Failed to initialize calling."
-      );
+      const message =
+        err instanceof Error ? err.message : "Failed to initialize calling.";
+      if (isTwilioVoiceNotConfiguredMessage(message)) {
+        setVoiceUnavailableHint(message);
+        setCallState("idle");
+        return;
+      }
+      setError(message);
       setCallState("error");
     }
-  }, [refreshToken]);
+  }, [refreshToken, voiceUnavailableHint]);
 
   const startCall = useCallback(
     async ({ to, user }: StartCallOptions) => {
@@ -118,7 +127,9 @@ export function useTwilioVoice() {
 
       const device = deviceRef.current;
       if (!device) {
-        setError("Calling is not ready. Please try again.");
+        if (!voiceUnavailableHint) {
+          setError("Calling is not ready. Please try again.");
+        }
         return;
       }
 
@@ -145,7 +156,7 @@ export function useTwilioVoice() {
         cleanupCall();
       }
     },
-    [attachCallListeners, cleanupCall, initialize]
+    [attachCallListeners, cleanupCall, initialize, voiceUnavailableHint]
   );
 
   const hangUp = useCallback(() => {
@@ -183,6 +194,7 @@ export function useTwilioVoice() {
     activeNumber,
     isMuted,
     error,
+    voiceUnavailableHint,
     fromNumber,
     isInCall,
     isReady: callState === "ready",

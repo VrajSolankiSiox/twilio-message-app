@@ -46,6 +46,18 @@ async function ensureIndexes() {
   indexesEnsured = true;
 }
 
+export async function updateMessageStatus(
+  sid: string,
+  status: string
+): Promise<void> {
+  await ensureIndexes();
+  const db = await getDb();
+  await db.collection<StoredMessage>("messages").updateOne(
+    { sid },
+    { $set: { status } }
+  );
+}
+
 export async function saveMessage(
   message: Omit<StoredMessage, "createdAt">
 ): Promise<void> {

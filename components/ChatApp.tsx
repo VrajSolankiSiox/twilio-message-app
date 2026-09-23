@@ -2,10 +2,12 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import ConversationList from "@/components/ConversationList";
+import InboxFilters from "@/components/messages/InboxFilters";
 import LiveCallBar from "@/components/LiveCallBar";
 import { useVoiceCall } from "@/components/VoiceCallProvider";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { highlightStopWithOtherReply } from "@/lib/filters";
+import { formatOutboundMessageStatus } from "@/lib/message-status";
 import { isStopMessage } from "@/lib/stop";
 import type { ChatMessage, Conversation } from "@/lib/messages";
 import { conversationLabel } from "@/lib/messages";
@@ -14,6 +16,10 @@ import {
   MESSAGE_THREAD_PAGE_SIZE,
 } from "@/lib/messaging";
 import { formatPhoneDisplay, normalizePhone } from "@/lib/phone";
+import {
+  formatMessageTimestampFull,
+  formatRelativeTime,
+} from "@/lib/relative-time";
 
 interface CurrentUser {
   id: string;
@@ -28,21 +34,13 @@ interface TeamMember {
   role: string;
 }
 
-function formatTime(dateStr: string): string {
-  const date = new Date(dateStr);
-  const now = new Date();
-  const isToday = date.toDateString() === now.toDateString();
-
-  if (isToday) {
-    return date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-  }
-
-  return date.toLocaleDateString([], {
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  });
+function useRelativeTimeClock(intervalMs = 60_000): Date {
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const id = setInterval(() => setNow(new Date()), intervalMs);
+    return () => clearInterval(id);
+  }, [intervalMs]);
+  return now;
 }
 
 function formatDateDivider(dateStr: string): string {
@@ -163,6 +161,7 @@ function addMessageToConversations(
 }
 
 export default function ChatApp() {
+  const relativeNow = useRelativeTimeClock();
   const voice = useVoiceCall();
   const isMobile = useIsMobile();
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -668,80 +667,38 @@ export default function ChatApp() {
 
   return (
     <div className="flex h-full min-h-0 w-full flex-col overflow-hidden bg-surface">
-      {/* Toolbar */}
-      <div className="flex shrink-0 flex-wrap items-center gap-3 border-b border-border bg-brand-muted/30 px-4 py-2.5 sm:gap-4 sm:px-5 sm:py-3">
-        <span className="text-xs font-semibold uppercase tracking-wider text-brand">
-          Filters
-        </span>
-        <label className="flex cursor-pointer items-center gap-2 text-sm text-zinc-600">
-          <input
-            type="checkbox"
-            checked={showClosed}
-            onChange={(e) => {
-              const next = e.target.checked;
-              setShowClosed(next);
-              if (next) {
-                setShowStop(false);
-                setShowBlank(false);
-              }
-            }}
-            className="rounded border-border text-brand focus:ring-brand/30"
-          />
-          Closed
-        </label>
-        <label
-          className={`flex items-center gap-2 text-sm ${
-            showClosed ? "cursor-not-allowed text-zinc-400" : "cursor-pointer text-zinc-600"
-          }`}
-        >
-          <input
-            type="checkbox"
-            checked={showStop}
-            disabled={showClosed}
-            onChange={(e) => setShowStop(e.target.checked)}
-            className="rounded border-border text-brand focus:ring-brand/30 disabled:opacity-50"
-          />
-          STOP messages
-        </label>
-        <label
-          className={`flex items-center gap-2 text-sm ${
-            showClosed ? "cursor-not-allowed text-zinc-400" : "cursor-pointer text-zinc-600"
-          }`}
-        >
-          <input
-            type="checkbox"
-            checked={showBlank}
-            disabled={showClosed}
-            onChange={(e) => setShowBlank(e.target.checked)}
-            className="rounded border-border text-brand focus:ring-brand/30 disabled:opacity-50"
-          />
-          No-reply chats
-        </label>
-      </div>
-
-      {/* Main chat layout */}
       <div className="flex min-h-0 flex-1 overflow-hidden">
-        {/* Conversation list */}
+        {/* Inbox column — filters + list (no full-width toolbar) */}
         <div
-          className={`flex w-full shrink-0 flex-col overflow-hidden border-r border-border lg:w-80 ${
+          className={`flex w-full shrink-0 flex-col overflow-hidden border-r border-border bg-surface lg:w-80 ${
             mobilePane === "chat" ? "hidden lg:flex" : "flex"
           }`}
         >
-          <div className="shrink-0 border-b border-border px-4 py-3 sm:px-5 sm:py-4">
-            <h2 className="text-sm font-semibold text-foreground">
-              {showClosed ? "Closed" : "Inbox"}
-            </h2>
-            <p className="text-xs text-zinc-400">
-              {conversationTotal > 0 ? conversationTotal : conversations.length}{" "}
-              {showClosed ? "closed" : ""} conversation
-              {(conversationTotal > 0 ? conversationTotal : conversations.length) ===
-              1
-                ? ""
-                : "s"}
-              {hasMoreConversations && conversations.length < conversationTotal
-                ? ` · showing ${conversations.length}`
-                : ""}
-            </p>
+          <div className="shrink-0 space-y-3 border-b border-border px-4 py-3 sm:px-5 sm:py-4">
+            <div>
+              <h2 className="text-sm font-semibold text-foreground">
+                {showClosed ? "Closed" : "Inbox"}
+              </h2>
+              <p className="text-xs text-zinc-400">
+                {conversationTotal > 0 ? conversationTotal : conversations.length}{" "}
+                {showClosed ? "closed" : ""} conversation
+                {(conversationTotal > 0 ? conversationTotal : conversations.length) ===
+                1
+                  ? ""
+                  : "s"}
+                {hasMoreConversations && conversations.length < conversationTotal
+                  ? ` · showing ${conversations.length}`
+                  : ""}
+              </p>
+            </div>
+            <InboxFilters
+              showClosed={showClosed}
+              showStop={showStop}
+              showBlank={showBlank}
+              onShowClosedChange={setShowClosed}
+              onShowStopChange={setShowStop}
+              onShowBlankChange={setShowBlank}
+            />
           </div>
 
           <ConversationList
@@ -756,11 +713,14 @@ export default function ChatApp() {
               if (!hasMoreConversations || loadingMoreList) return;
               void fetchConversations({ page: listPage + 1, append: true });
             }}
-            formatTime={formatTime}
+            formatTime={(dateStr) =>
+              formatRelativeTime(dateStr, relativeNow)
+            }
+            formatTimeTitle={formatMessageTimestampFull}
           />
         </div>
 
-        {/* Chat panel */}
+        {/* Chat — full column height from top of split */}
         <div
           className={`min-h-0 min-w-0 flex-1 flex-col ${
             mobilePane === "list" ? "hidden lg:flex" : "flex"
@@ -768,7 +728,6 @@ export default function ChatApp() {
         >
           {selectedConversation ? (
             <>
-              {/* Chat header */}
               <header className="shrink-0 border-b border-border bg-surface px-3 py-2 sm:px-4">
                 <div className="flex items-center gap-2">
                   <button
@@ -873,9 +832,13 @@ export default function ChatApp() {
                             },
                           })
                         }
-                        disabled={voice.isInCall}
+                        disabled={
+                          voice.isInCall || Boolean(voice.voiceUnavailableHint)
+                        }
                         className="flex h-8 w-8 items-center justify-center rounded-lg border border-brand/20 text-brand transition-colors hover:bg-brand hover:text-white disabled:opacity-50"
-                        title="Call"
+                        title={
+                          voice.voiceUnavailableHint ?? "Call contact"
+                        }
                         aria-label="Call contact"
                       >
                         <svg
@@ -938,7 +901,6 @@ export default function ChatApp() {
                 )}
               </header>
 
-              {/* Messages — scroll contained here only */}
               <div
                 ref={messagesContainerRef}
                 onScroll={handleMessagesScroll}
@@ -971,6 +933,9 @@ export default function ChatApp() {
                           )
                         : null;
                     const showDivider = dateLabel !== prevDateLabel;
+                    const outboundStatus = isOutbound
+                      ? formatOutboundMessageStatus(msg.status)
+                      : null;
 
                     return (
                       <div key={msg.sid}>
@@ -1004,8 +969,19 @@ export default function ChatApp() {
                                 isOutbound ? "text-white/50" : "text-zinc-400"
                               }`}
                             >
-                              {formatTime(msg.dateCreated)}
-                              {isOutbound && msg.status && ` · ${msg.status}`}
+                              <time
+                                dateTime={msg.dateCreated}
+                                title={formatMessageTimestampFull(
+                                  msg.dateCreated
+                                )}
+                                className="cursor-default"
+                              >
+                                {formatRelativeTime(
+                                  msg.dateCreated,
+                                  relativeNow
+                                )}
+                              </time>
+                              {outboundStatus && ` · ${outboundStatus}`}
                             </p>
                           </div>
                         </div>
@@ -1015,7 +991,6 @@ export default function ChatApp() {
                 </div>
               </div>
 
-              {/* Composer */}
               {canReply ? (
                 <form
                   onSubmit={handleSendReply}

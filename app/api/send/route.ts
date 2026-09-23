@@ -10,6 +10,7 @@ import {
 } from "@/lib/db/conversations";
 import { getAllMessages, saveMessage } from "@/lib/db/messages";
 import { buildConversations, canUserReplyToConversation } from "@/lib/messages";
+import { getMessageStatusCallbackUrl } from "@/lib/message-status";
 import { normalizePhone } from "@/lib/phone";
 
 interface SendResult {
@@ -114,10 +115,12 @@ export async function POST(request: NextRequest) {
       const to = normalizePhone(rawNumber);
 
       try {
+        const statusCallback = getMessageStatusCallbackUrl();
         const msg = await client.messages.create({
           from: fromNumber,
           to,
           body: message,
+          ...(statusCallback && { statusCallback }),
         });
 
         const dateCreated = msg.dateCreated.toISOString();

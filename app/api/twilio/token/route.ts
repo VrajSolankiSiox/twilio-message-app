@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
+import { TWILIO_VOICE_NOT_CONFIGURED_MESSAGE } from "@/lib/voice-client";
 import {
   createVoiceAccessToken,
   getVoiceConfig,
@@ -14,10 +15,7 @@ export async function GET() {
   const config = getVoiceConfig();
   if (!config) {
     return NextResponse.json(
-      {
-        error:
-          "Twilio Voice is not configured. Set TWILIO_API_KEY, TWILIO_API_SECRET, and TWILIO_TWIML_APP_SID.",
-      },
+      { error: TWILIO_VOICE_NOT_CONFIGURED_MESSAGE },
       { status: 500 }
     );
   }

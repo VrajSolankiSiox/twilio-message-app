@@ -119,7 +119,16 @@ export default function CallPanel({ prefillPhone, currentUser }: CallPanelProps)
 
               <button
                 onClick={handleCall}
-                disabled={isBusy || !phone.trim() || !currentUser}
+                disabled={
+                  isBusy ||
+                  !phone.trim() ||
+                  !currentUser ||
+                  Boolean(voice.voiceUnavailableHint)
+                }
+                title={
+                  voice.voiceUnavailableHint ??
+                  "Place a live call from your browser"
+                }
                 className="flex w-full items-center justify-center gap-2 rounded-xl bg-brand px-4 py-3 text-sm font-semibold text-white transition-colors hover:bg-brand-hover disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -136,12 +145,6 @@ export default function CallPanel({ prefillPhone, currentUser }: CallPanelProps)
                     ? "Call in progress"
                     : "Start Call"}
               </button>
-
-              {voice.error && !voice.isInCall && (
-                <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-                  {voice.error}
-                </div>
-              )}
 
               <p className="text-xs text-zinc-400">
                 Your browser will ask for microphone permission on the first call.
