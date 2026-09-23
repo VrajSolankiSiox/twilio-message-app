@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "RevenelX SMS Portal",
-  description: "RevenelX team SMS messaging and bulk communications",
+  description: "RevenelX team SMS messaging and campaigns",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

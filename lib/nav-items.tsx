@@ -41,8 +41,8 @@ export const NAV_ITEMS: NavItem[] = [
   },
   {
     id: "bulk",
-    label: "Bulk Send",
-    shortLabel: "Bulk",
+    label: "Campaigns",
+    shortLabel: "Campaigns",
     adminOnly: true,
     icon: (
       <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -50,7 +50,7 @@ export const NAV_ITEMS: NavItem[] = [
           strokeLinecap="round"
           strokeLinejoin="round"
           strokeWidth={1.75}
-          d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8M3 7h18M3 12h18M3 17h12"
+          d="M11 5.882V19.24a1.76 1.76 0 01-3.417.592l-2.147-6.15M18 13a3 3 0 100-6M5.436 13.683A4.001 4.001 0 017 6h1.832c4.1 0 7.625-1.234 9.168-3v14c-1.543-1.766-5.067-3-9.168-3H7a3.988 3.988 0 01-1.564-.317z"
         />
       </svg>
     ),

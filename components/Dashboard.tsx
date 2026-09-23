@@ -8,16 +8,15 @@ import MobileNav from "@/components/MobileNav";
 import Sidebar, { type NavTab } from "@/components/Sidebar";
 import TabPanel from "@/components/TabPanel";
 import { VoiceCallProvider } from "@/components/VoiceCallProvider";
+import Campaigns from "@/components/Campaigns";
 import InvoiceGenerator from "@/components/InvoiceGenerator";
 import UserManagement from "@/components/UserManagement";
-import { parseContactsFromFile, type CsvContact } from "@/lib/csv";
 import {
   isAdminTab,
   pathnameToTab,
   TAB_ORDER,
   tabToPath,
 } from "@/lib/navigation";
-import { normalizePhone } from "@/lib/phone";
 
 export interface CurrentUser {
   id: string;
@@ -26,20 +25,9 @@ export interface CurrentUser {
   role: "admin" | "employee";
 }
 
-interface SendResult {
-  to: string;
-  success: boolean;
-  sid?: string;
-  status?: string;
-  error?: string;
-}
-
 interface DashboardProps {
   initialUser: CurrentUser | null;
 }
-
-const inputClass =
-  "w-full rounded-xl border border-border bg-white px-4 py-2.5 text-sm text-foreground placeholder:text-zinc-400 focus:border-brand focus:ring-2 focus:ring-brand/20";
 
 export default function Dashboard({ initialUser }: DashboardProps) {
   const router = useRouter();
@@ -49,101 +37,6 @@ export default function Dashboard({ initialUser }: DashboardProps) {
   const prevTabRef = useRef(activeTab);
   const [tabDirection, setTabDirection] = useState(0);
   const [callPrefillPhone, setCallPrefillPhone] = useState<string | null>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const [message, setMessage] = useState("");
-  const [contacts, setContacts] = useState<CsvContact[]>([]);
-  const [fileName, setFileName] = useState<string | null>(null);
-  const [sending, setSending] = useState(false);
-  const [results, setResults] = useState<SendResult[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    setError(null);
-    setResults(null);
-
-    const parsed = await parseContactsFromFile(file);
-
-    if (parsed.length === 0) {
-      setError("No phone numbers found in the second column.");
-      setContacts([]);
-      setFileName(null);
-      return;
-    }
-
-    setContacts(parsed);
-    setFileName(file.name);
-
-    const namedContacts = parsed.filter((contact) => contact.name);
-    if (namedContacts.length > 0) {
-      try {
-        await fetch("/api/contacts", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ contacts: namedContacts }),
-        });
-      } catch {
-        // Names will still be saved when messages are sent.
-      }
-    }
-  };
-
-  const handleSend = async () => {
-    if (!message.trim()) {
-      setError("Please enter a message.");
-      return;
-    }
-    if (contacts.length === 0) {
-      setError("Please upload a CSV with phone numbers.");
-      return;
-    }
-
-    setSending(true);
-    setError(null);
-    setResults(null);
-
-    try {
-      const contactNames = Object.fromEntries(
-        contacts
-          .filter((contact) => contact.name)
-          .map((contact) => [contact.phone, contact.name])
-      );
-
-      const res = await fetch("/api/send?bulk=true", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          message,
-          phoneNumbers: contacts.map((contact) => contact.phone),
-          contactNames,
-        }),
-      });
-
-      const data = await res.json();
-
-      if (!res.ok) {
-        setError(data.error || "Failed to send messages.");
-        return;
-      }
-
-      setResults(data.results);
-    } catch {
-      setError("Network error. Please try again.");
-    } finally {
-      setSending(false);
-    }
-  };
-
-  const handleClear = () => {
-    setContacts([]);
-    setFileName(null);
-    setMessage("");
-    setResults(null);
-    setError(null);
-    if (fileInputRef.current) fileInputRef.current.value = "";
-  };
 
   const handleLogout = async () => {
     await fetch("/api/auth/logout", { method: "POST" });
@@ -152,13 +45,11 @@ export default function Dashboard({ initialUser }: DashboardProps) {
   };
 
   const isAdmin = user?.role === "admin";
-  const successCount = results?.filter((r) => r.success).length ?? 0;
-  const failCount = results ? results.length - successCount : 0;
 
   const pageTitles: Record<NavTab, string> = {
     messages: "Messages",
     calls: "Live Calls",
-    bulk: "Bulk Send",
+    bulk: "Campaigns",
     team: isAdmin ? "Team Management" : "Teams",
     invoices: "Invoice Generator",
   };
@@ -266,141 +157,7 @@ export default function Dashboard({ initialUser }: DashboardProps) {
                 direction={tabDirection}
                 className="overflow-y-auto p-4 sm:p-6"
               >
-                <div className="mx-auto max-w-3xl space-y-4 sm:space-y-6">
-                  <section className="rounded-2xl border border-border bg-surface p-4 shadow-sm sm:p-6">
-                    <h2 className="mb-1 text-sm font-semibold uppercase tracking-wide text-brand">
-                      Step 1
-                    </h2>
-                    <p className="mb-4 text-base font-medium text-foreground">
-                      Import contacts
-                    </p>
-                    <div
-                      className="flex cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-brand/30 bg-brand-muted/50 px-6 py-12 transition-colors hover:border-brand hover:bg-brand-light"
-                      onClick={() => fileInputRef.current?.click()}
-                    >
-                      <p className="text-sm font-medium text-foreground">
-                        {fileName ? fileName : "Click to upload CSV or Excel file"}
-                      </p>
-                      <p className="mt-1 text-xs text-zinc-500">
-                        Names in the first column, phone numbers in the second
-                        (.csv, .xlsx, .xls)
-                      </p>
-                    </div>
-                    <input
-                      ref={fileInputRef}
-                      type="file"
-                      accept=".csv,.xlsx,.xls"
-                      className="hidden"
-                      onChange={handleFileChange}
-                    />
-
-                    {contacts.length > 0 && (
-                      <div className="mt-4 rounded-xl bg-brand-muted p-4">
-                        <p className="mb-2 text-sm font-medium text-brand">
-                          {contacts.length} contact
-                          {contacts.length !== 1 && "s"} loaded
-                        </p>
-                        <ul className="max-h-36 space-y-1 overflow-y-auto text-sm text-zinc-600">
-                          {contacts.map((contact, i) => (
-                            <li key={i}>
-                              {contact.name ? (
-                                <>
-                                  <span className="font-medium text-foreground">
-                                    {contact.name}
-                                  </span>
-                                  <span className="font-mono text-zinc-500">
-                                    {" "}
-                                    {normalizePhone(contact.phone)}
-                                  </span>
-                                </>
-                              ) : (
-                                <span className="font-mono">
-                                  {normalizePhone(contact.phone)}
-                                </span>
-                              )}
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    )}
-                  </section>
-
-                  <section className="rounded-2xl border border-border bg-surface p-4 shadow-sm sm:p-6">
-                    <h2 className="mb-1 text-sm font-semibold uppercase tracking-wide text-brand">
-                      Step 2
-                    </h2>
-                    <p className="mb-4 text-base font-medium text-foreground">
-                      Compose your message
-                    </p>
-                    <textarea
-                      value={message}
-                      onChange={(e) => setMessage(e.target.value)}
-                      placeholder="Type your SMS message here..."
-                      rows={5}
-                      className={`${inputClass} resize-none`}
-                    />
-                    <p className="mt-2 text-xs text-zinc-400">
-                      {message.length} characters
-                    </p>
-                  </section>
-
-                  <div className="flex flex-col gap-3 sm:flex-row">
-                    <button
-                      onClick={handleSend}
-                      disabled={
-                        sending || contacts.length === 0 || !message.trim()
-                      }
-                      className="flex-1 rounded-xl bg-brand px-6 py-3 text-sm font-semibold text-white transition-colors hover:bg-brand-hover disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      {sending
-                        ? `Sending to ${contacts.length} numbers...`
-                        : `Send to ${contacts.length || 0} numbers`}
-                    </button>
-                    <button
-                      onClick={handleClear}
-                      disabled={sending}
-                      className="rounded-xl border border-border px-6 py-3 text-sm font-medium text-zinc-600 transition-colors hover:bg-brand-light"
-                    >
-                      Clear
-                    </button>
-                  </div>
-
-                  {error && (
-                    <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-                      {error}
-                    </div>
-                  )}
-
-                  {results && (
-                    <section className="rounded-2xl border border-border bg-surface p-6 shadow-sm">
-                      <div className="mb-4 flex gap-4 text-sm font-medium">
-                        <span className="text-green-600">{successCount} sent</span>
-                        {failCount > 0 && (
-                          <span className="text-red-600">{failCount} failed</span>
-                        )}
-                      </div>
-                      <div className="space-y-2">
-                        {results.map((result, i) => (
-                          <div
-                            key={i}
-                            className={`rounded-xl px-4 py-3 text-sm ${
-                              result.success ? "bg-green-50" : "bg-red-50"
-                            }`}
-                          >
-                            <span className="font-mono text-foreground">
-                              {result.to}
-                            </span>
-                            {!result.success && result.error && (
-                              <p className="mt-0.5 text-xs text-red-600">
-                                {result.error}
-                              </p>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    </section>
-                  )}
-                </div>
+                <Campaigns />
               </TabPanel>
             )}
 
