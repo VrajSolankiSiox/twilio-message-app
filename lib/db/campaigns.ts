@@ -1,4 +1,4 @@
-import { ObjectId, type OptionalId } from "mongodb";
+import { ObjectId } from "mongodb";
 import {
   CAMPAIGN_MESSAGE_MAX,
   CAMPAIGN_NAME_MAX,
@@ -308,9 +308,7 @@ export async function createCampaign(input: {
   const chunkSize = 1000;
   try {
     for (let i = 0; i < docs.length; i += chunkSize) {
-      await recipientCol.insertMany(
-        docs.slice(i, i + chunkSize) as OptionalId<CampaignRecipientDocument>[]
-      );
+      await recipientCol.insertMany(docs.slice(i, i + chunkSize));
     }
   } catch (error) {
     await recipientCol.deleteMany({ campaignId });
@@ -342,7 +340,7 @@ export async function createCampaign(input: {
 
   try {
     const col = await campaigns();
-    await col.insertOne(campaign as OptionalId<CampaignDocument>);
+    await col.insertOne(campaign);
   } catch (error) {
     await recipientCol.deleteMany({ campaignId });
     throw error;
