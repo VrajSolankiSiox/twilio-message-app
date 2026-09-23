@@ -17,6 +17,7 @@ export async function GET(request: NextRequest) {
   try {
     const showStop = request.nextUrl.searchParams.get("showStop") === "true";
     const showBlank = request.nextUrl.searchParams.get("showBlank") === "true";
+    const showClosed = request.nextUrl.searchParams.get("showClosed") === "true";
 
     const [messages, assignments] = await Promise.all([
       getAllMessages(),
@@ -32,6 +33,7 @@ export async function GET(request: NextRequest) {
     const filtered = applyConversationFilters(accessible, {
       showStop,
       showBlank,
+      showClosed,
     });
 
     return NextResponse.json({

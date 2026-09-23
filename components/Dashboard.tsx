@@ -1,7 +1,7 @@
 "use client";
 
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import CallPanel from "@/components/CallPanel";
 import ChatApp from "@/components/ChatApp";
 import MobileNav from "@/components/MobileNav";
@@ -13,6 +13,8 @@ import InvoiceGenerator from "@/components/InvoiceGenerator";
 import UserManagement from "@/components/UserManagement";
 import {
   isAdminTab,
+  isCampaignAppPath,
+  normalizeAppPathname,
   pathnameToTab,
   TAB_ORDER,
   tabToPath,
@@ -33,7 +35,9 @@ export default function Dashboard({ initialUser }: DashboardProps) {
   const router = useRouter();
   const pathname = usePathname();
   const user = initialUser;
-  const activeTab = pathnameToTab(pathname) ?? "messages";
+  const activeTab =
+    pathnameToTab(pathname) ??
+    (isCampaignAppPath(pathname) ? "campaign" : "messages");
   const prevTabRef = useRef(activeTab);
   const [tabDirection, setTabDirection] = useState(0);
   const [callPrefillPhone, setCallPrefillPhone] = useState<string | null>(null);
@@ -55,17 +59,21 @@ export default function Dashboard({ initialUser }: DashboardProps) {
   };
 
   useEffect(() => {
-    if (pathname === "/bulk") {
-      router.replace("/campaign");
+    const canonicalPath = normalizeAppPathname(pathname);
+    if (canonicalPath !== pathname) {
+      router.replace(canonicalPath);
       return;
     }
 
-    if (pathnameToTab(pathname) === null) {
+    if (isCampaignAppPath(pathname)) {
+      if (!isAdmin) {
+        router.replace("/messages");
+        return;
+      }
+    } else if (pathnameToTab(pathname) === null) {
       router.replace("/messages");
       return;
-    }
-
-    if (!isAdmin && isAdminTab(activeTab)) {
+    } else if (!isAdmin && isAdminTab(activeTab)) {
       router.replace("/messages");
       return;
     }
@@ -162,7 +170,9 @@ export default function Dashboard({ initialUser }: DashboardProps) {
                 direction={tabDirection}
                 className="overflow-y-auto p-4 sm:p-6"
               >
-                <Campaigns />
+                <Suspense fallback={null}>
+                  <Campaigns />
+                </Suspense>
               </TabPanel>
             )}
 

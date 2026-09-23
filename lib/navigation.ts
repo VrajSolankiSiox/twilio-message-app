@@ -1,5 +1,18 @@
 import type { NavTab } from "@/components/Sidebar";
 
+/** Strip query/hash, trailing slashes, and map legacy /bulk → /campaign */
+export function normalizeAppPathname(pathname: string): string {
+  const base = (pathname.split("?")[0]?.split("#")[0] || "/").trim();
+  const trimmed =
+    base.length > 1 ? base.replace(/\/+$/, "") : base || "/";
+  return trimmed === "/bulk" ? "/campaign" : trimmed;
+}
+
+export function isCampaignAppPath(pathname: string): boolean {
+  const path = normalizeAppPathname(pathname);
+  return path === "/campaign" || path.startsWith("/campaign/");
+}
+
 export const TAB_ORDER: NavTab[] = [
   "messages",
   "calls",
@@ -30,7 +43,10 @@ export function tabToPath(tab: NavTab | LegacyNavTab): string {
 }
 
 export function pathnameToTab(pathname: string): NavTab | null {
-  const canonicalPath = pathname === "/bulk" ? "/campaign" : pathname;
+  const canonicalPath = normalizeAppPathname(pathname);
+  if (isCampaignAppPath(canonicalPath)) {
+    return "campaign";
+  }
   const entry = Object.entries(TAB_ROUTES).find(([, path]) => path === canonicalPath);
   return entry ? (entry[0] as NavTab) : null;
 }

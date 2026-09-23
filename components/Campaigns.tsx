@@ -1,6 +1,15 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import CampaignPageHeader, {
+  CreateCampaignSteps,
+} from "@/components/campaign/CampaignPageHeader";
+import {
+  CAMPAIGN_ROUTES,
+  campaignDetailIdFromPath,
+  campaignViewFromPath,
+} from "@/lib/campaign-navigation";
 import {
   CAMPAIGN_CONTACT_PREVIEW_PAGE_SIZE,
   CAMPAIGN_DELIVERY_PAGE_SIZE,
@@ -19,7 +28,6 @@ import { formatPhoneDisplay } from "@/lib/phone";
 const inputClass =
   "w-full rounded-xl border border-border bg-white px-4 py-2.5 text-sm text-foreground placeholder:text-zinc-400 focus:border-brand focus:ring-2 focus:ring-brand/20";
 
-type View = "list" | "create" | "detail";
 type ActivityFilter = "all" | "sent" | "failed";
 
 function sleep(ms: number) {
@@ -110,38 +118,6 @@ function PaginationBar({
   );
 }
 
-function CampaignsBackButton({
-  onClick,
-  label = "All campaigns",
-}: {
-  onClick: () => void;
-  label?: string;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-label="Back to campaign list"
-      className="inline-flex items-center gap-2 rounded-xl border border-border bg-surface px-3 py-2 text-sm font-medium text-zinc-600 shadow-sm transition-colors hover:border-brand/25 hover:bg-brand-light hover:text-foreground"
-    >
-      <span
-        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-brand-muted text-brand"
-        aria-hidden
-      >
-        <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2}
-            d="M15 19l-7-7 7-7"
-          />
-        </svg>
-      </span>
-      {label}
-    </button>
-  );
-}
-
 function StatusBadge({ status }: { status: CampaignStatus }) {
   return (
     <span
@@ -212,6 +188,12 @@ function ProgressBar({ value }: { value: number }) {
 }
 
 export default function Campaigns() {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const view = campaignViewFromPath(pathname);
+  const routeDetailId = campaignDetailIdFromPath(pathname);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const runTokenRef = useRef(0);
   const pauseRef = useRef(false);
@@ -219,8 +201,6 @@ export default function Campaigns() {
   const runningIdRef = useRef<string | null>(null);
   const detailIdRef = useRef<string | null>(null);
   const campaignRef = useRef<CampaignSummary | null>(null);
-
-  const [view, setView] = useState<View>("list");
   const [campaigns, setCampaigns] = useState<CampaignSummary[]>([]);
   const [listLoading, setListLoading] = useState(true);
   const [listError, setListError] = useState<string | null>(null);
@@ -525,60 +505,97 @@ export default function Campaigns() {
     [applyUpdate, refreshDetail]
   );
 
-  const openCampaign = useCallback(
-    async (id: string, resume = false) => {
-      setView("detail");
-      detailIdRef.current = id;
-      setActivityFilter("all");
-      setDeliveryPage(1);
-      setDetailLoading(campaignRef.current?.id !== id);
-      setError(null);
-      setNotice(null);
-      if (campaignRef.current?.id !== id) {
-        campaignRef.current = null;
-        setCampaign(null);
-        setDeliveryItems([]);
-      }
-
-      try {
-        const res = await fetch(`/api/campaigns/${id}`);
-        const data = await res.json();
-        if (!res.ok) {
-          setError(data.error || "Failed to open campaign");
-          return;
-        }
-
-        const current = campaignRef.current;
-        const stale = Boolean(
-          current?.id === id && current.updatedAt > data.campaign.updatedAt
-        );
-        if (!stale) {
-          campaignRef.current = data.campaign;
-          setCampaign(data.campaign);
-        }
-        applyUpdate(data.campaign);
-
-        if (resume) {
-          await runLoop(id, true, skipAlreadySent, true);
-        }
-      } catch {
-        setError("Network error. Please try again.");
-      } finally {
-        setDetailLoading(false);
-      }
+  const goToCampaign = useCallback(
+    (id: string, resume = false) => {
+      const path = resume
+        ? `${CAMPAIGN_ROUTES.detail(id)}?resume=1`
+        : CAMPAIGN_ROUTES.detail(id);
+      router.push(path);
     },
-    [applyUpdate, runLoop, skipAlreadySent]
+    [router]
   );
 
-  const handleBack = () => {
-    detailIdRef.current = null;
-    campaignRef.current = null;
-    setSkipAlreadySent(true);
-    setView("list");
-    setNotice(null);
+  const goToCreate = useCallback(() => {
+    setFormError(null);
+    router.push(CAMPAIGN_ROUTES.new);
+  }, [router]);
+
+  useEffect(() => {
+    if (view !== "detail" || !routeDetailId) {
+      if (view !== "detail") detailIdRef.current = null;
+      return;
+    }
+
+    const id = routeDetailId;
+    const resume = searchParams.get("resume") === "1";
+    const alreadyLoaded = campaignRef.current?.id === id;
+
+    detailIdRef.current = id;
+    setActivityFilter("all");
+    setDeliveryPage(1);
     setError(null);
-    void loadList(listPage, true);
-  };
+    if (!resume) setNotice(null);
+
+    if (!alreadyLoaded) {
+      campaignRef.current = null;
+      setCampaign(null);
+      setDeliveryItems([]);
+      setDetailLoading(true);
+    }
+
+    if (alreadyLoaded && !resume) {
+      setDetailLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+
+    void (async () => {
+      if (!alreadyLoaded) {
+        try {
+          const res = await fetch(`/api/campaigns/${id}`);
+          const data = await res.json();
+          if (cancelled || detailIdRef.current !== id) return;
+          if (!res.ok) {
+            setError(data.error || "Failed to open campaign");
+            return;
+          }
+
+          const current = campaignRef.current;
+          const stale = Boolean(
+            current?.id === id && current.updatedAt > data.campaign.updatedAt
+          );
+          if (!stale) {
+            campaignRef.current = data.campaign;
+            setCampaign(data.campaign);
+          }
+          applyUpdate(data.campaign);
+        } catch {
+          if (!cancelled) setError("Network error. Please try again.");
+          return;
+        } finally {
+          if (!cancelled) setDetailLoading(false);
+        }
+      }
+
+      if (cancelled || !resume) return;
+
+      router.replace(CAMPAIGN_ROUTES.detail(id));
+      await runLoop(id, true, skipAlreadySent, true);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    view,
+    routeDetailId,
+    searchParams,
+    applyUpdate,
+    runLoop,
+    skipAlreadySent,
+    router,
+  ]);
 
   const handlePause = async (id: string) => {
     if (runningIdRef.current === id) pauseRef.current = true;
@@ -725,9 +742,9 @@ export default function Campaigns() {
       setActivityFilter("all");
       setNotice(null);
       setError(null);
-      setView("detail");
       applyUpdate(data.campaign);
       handleClearForm();
+      router.push(CAMPAIGN_ROUTES.detail(data.campaign.id));
       await runLoop(data.campaign.id, false, skipAlreadySent, false);
     } catch {
       setFormError("Network error. Please try again.");
@@ -747,8 +764,31 @@ export default function Campaigns() {
     contactPreviewStart + CAMPAIGN_CONTACT_PREVIEW_PAGE_SIZE
   );
 
+  const detailSending =
+    campaign &&
+    (campaign.status === "sending" || runningId === campaign.id);
+
   return (
-    <div className="mx-auto max-w-3xl space-y-4 sm:space-y-6">
+    <div className="mx-auto max-w-4xl space-y-4 sm:space-y-6">
+      <CampaignPageHeader
+        view={view}
+        listTotal={view === "list" ? listTotal : undefined}
+        detailTitle={campaign?.name}
+        detailLoading={view === "detail" && detailLoading && !campaign}
+        detailAccessory={
+          campaign ? (
+            <StatusBadge
+              status={
+                detailSending && campaign.status !== "completed"
+                  ? "sending"
+                  : campaign.status
+              }
+            />
+          ) : null
+        }
+        onNewCampaign={view === "list" ? goToCreate : undefined}
+      />
+
       {view === "list" && (
         <>
           {(error || notice) && (
@@ -762,24 +802,6 @@ export default function Campaigns() {
               {error || notice}
             </div>
           )}
-
-          <div className="flex items-end justify-between gap-3">
-            <div>
-              <p className="text-sm text-zinc-500">
-                Name a campaign, send it, and pick it back up if it stops early.
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={() => {
-                setFormError(null);
-                setView("create");
-              }}
-              className="shrink-0 rounded-xl bg-brand px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-brand-hover"
-            >
-              New campaign
-            </button>
-          </div>
 
           {listError && (
             <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
@@ -795,132 +817,184 @@ export default function Campaigns() {
           )}
 
           {listLoading && (
-            <div className="space-y-3">
-              {[0, 1, 2].map((item) => (
-                <div
-                  key={item}
-                  className="h-36 animate-pulse rounded-2xl border border-border bg-surface"
-                />
-              ))}
-            </div>
-          )}
-
-          {!listLoading && listTotal === 0 && !listError && (
-            <section className="rounded-2xl border border-dashed border-brand/30 bg-surface px-6 py-16 text-center shadow-sm">
-              <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-brand-light text-brand">
-                <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={1.75}
-                    d="M11 5.882V19.24a1.76 1.76 0 01-3.417.592l-2.147-6.15M18 13a3 3 0 100-6M5.436 13.683A4.001 4.001 0 017 6h1.832c4.1 0 7.625-1.234 9.168-3v14c-1.543-1.766-5.067-3-9.168-3H7a3.988 3.988 0 01-1.564-.317z"
-                  />
-                </svg>
+            <section className="overflow-hidden rounded-2xl border border-border bg-surface shadow-sm">
+              <div className="divide-y divide-border">
+                {[0, 1, 2].map((item) => (
+                  <div key={item} className="h-24 animate-pulse bg-brand-muted/20" />
+                ))}
               </div>
-              <h2 className="text-base font-semibold text-foreground">No campaigns yet</h2>
-              <p className="mx-auto mt-1 max-w-sm text-sm text-zinc-500">
-                Create a campaign to send one message to a contact list and track how many
-                were sent or failed.
-              </p>
             </section>
           )}
 
-          <div className="space-y-3">
-            {campaigns.map((item) => {
-              const progress = campaignProgress(item);
-              const resumable = canResumeCampaign(item, true);
-              return (
-                <article
-                  key={item.id}
-                  className="rounded-2xl border border-border bg-surface shadow-sm"
+          {!listLoading && listTotal === 0 && !listError && (
+            <section className="overflow-hidden rounded-2xl border border-border bg-surface shadow-sm">
+              <div className="px-6 py-16 text-center">
+                <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-brand-light text-brand">
+                  <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={1.75}
+                      d="M11 5.882V19.24a1.76 1.76 0 01-3.417.592l-2.147-6.15M18 13a3 3 0 100-6M5.436 13.683A4.001 4.001 0 017 6h1.832c4.1 0 7.625-1.234 9.168-3v14c-1.543-1.766-5.067-3-9.168-3H7a3.988 3.988 0 01-1.564-.317z"
+                    />
+                  </svg>
+                </div>
+                <h2 className="text-base font-semibold text-foreground">No campaigns yet</h2>
+                <p className="mx-auto mt-1 max-w-sm text-sm text-zinc-500">
+                  Create your first campaign to message a contact list and track delivery.
+                </p>
+                <button
+                  type="button"
+                  onClick={goToCreate}
+                  className="mt-6 inline-flex items-center gap-2 rounded-xl bg-brand px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-brand-hover"
                 >
-                  <button
-                    type="button"
-                    onClick={() => void openCampaign(item.id)}
-                    className="w-full px-4 py-4 text-left sm:px-5"
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <h2 className="truncate text-base font-semibold text-foreground">
-                          {item.name}
-                        </h2>
-                        <p className="mt-0.5 truncate text-sm text-zinc-500">{item.message}</p>
-                      </div>
-                      <StatusBadge status={item.status} />
-                    </div>
-                    <p className="mt-2 text-xs text-zinc-400">
-                      {formatWhen(item.createdAt)}
-                      {item.createdByName ? ` · ${item.createdByName}` : ""}
-                    </p>
-                    <div className="mt-4 grid grid-cols-3 gap-3">
-                      <Count label="Sent" value={item.sent} tone="good" />
-                      <Count label="Failed" value={item.failed} tone={item.failed > 0 ? "bad" : "muted"} />
-                      <Count label="Remaining" value={item.pending} tone={item.pending > 0 ? "wait" : "muted"} />
-                    </div>
-                    <div className="mt-4">
-                      <div className="mb-1.5 flex items-center justify-between text-xs text-zinc-500">
-                        <span>
-                          {item.sent + item.failed} of {item.total} processed
-                        </span>
-                        <span>{progress}%</span>
-                      </div>
-                      <ProgressBar value={progress} />
-                    </div>
-                  </button>
-                  {(resumable || item.status === "sending") && (
-                    <div className="flex gap-2 border-t border-border px-4 py-3 sm:px-5">
-                      {item.status === "sending" ? (
-                        <button
-                          type="button"
-                          onClick={() => void handlePause(item.id)}
-                          disabled={actionBusy}
-                          className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-2 text-sm font-medium text-amber-800 transition-colors hover:bg-amber-100 disabled:opacity-50"
-                        >
-                          Pause
-                        </button>
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={() => void openCampaign(item.id, true)}
-                          className="rounded-xl bg-brand px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-brand-hover"
-                        >
-                          Resume
-                        </button>
-                      )}
-                      <button
-                        type="button"
-                        onClick={() => void openCampaign(item.id)}
-                        className="rounded-xl border border-border px-4 py-2 text-sm font-medium text-zinc-600 transition-colors hover:bg-brand-light"
-                      >
-                        View
-                      </button>
-                    </div>
-                  )}
-                </article>
-              );
-            })}
-          </div>
+                  Create campaign
+                </button>
+              </div>
+            </section>
+          )}
 
-          <PaginationBar
-            page={listPage}
-            totalPages={listTotalPages}
-            total={listTotal}
-            onPageChange={setListPage}
-            disabled={listLoading}
-            noun="campaigns"
-          />
+          {!listLoading && listTotal > 0 && (
+            <section className="overflow-hidden rounded-2xl border border-border bg-surface shadow-sm">
+              <div className="hidden grid-cols-[1fr_7rem_5.5rem_4.5rem_2rem] gap-3 border-b border-border bg-brand-muted/40 px-5 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-500 sm:grid">
+                <span>Campaign</span>
+                <span>Progress</span>
+                <span className="text-right">Sent</span>
+                <span className="text-right">Failed</span>
+                <span aria-hidden />
+              </div>
+              <ul className="divide-y divide-border">
+                {campaigns.map((item) => {
+                  const progress = campaignProgress(item);
+                  const resumable = canResumeCampaign(item, true);
+                  const showActions = resumable || item.status === "sending";
+                  return (
+                    <li key={item.id} className="group">
+                      <div className="flex flex-col sm:flex-row sm:items-stretch">
+                        <button
+                          type="button"
+                          onClick={() => goToCampaign(item.id)}
+                          className="grid min-w-0 flex-1 gap-3 px-4 py-4 text-left transition-colors hover:bg-brand-muted/25 sm:grid-cols-[1fr_7rem_5.5rem_4.5rem_2rem] sm:items-center sm:gap-3 sm:px-5"
+                        >
+                          <div className="min-w-0">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="truncate text-sm font-semibold text-foreground">
+                                {item.name}
+                              </span>
+                              <StatusBadge status={item.status} />
+                            </div>
+                            <p className="mt-0.5 line-clamp-1 text-sm text-zinc-500">
+                              {item.message}
+                            </p>
+                            <p className="mt-1 text-xs text-zinc-400">
+                              {formatWhen(item.createdAt)}
+                              {item.createdByName ? ` · ${item.createdByName}` : ""}
+                            </p>
+                          </div>
+                          <div className="hidden sm:block">
+                            <div className="mb-1 flex justify-between text-[10px] tabular-nums text-zinc-500">
+                              <span>{progress}%</span>
+                              <span>
+                                {item.sent + item.failed}/{item.total}
+                              </span>
+                            </div>
+                            <ProgressBar value={progress} />
+                          </div>
+                          <p className="hidden text-right text-sm font-semibold tabular-nums text-emerald-600 sm:block">
+                            {item.sent}
+                          </p>
+                          <p
+                            className={`hidden text-right text-sm font-semibold tabular-nums sm:block ${
+                              item.failed > 0 ? "text-red-600" : "text-zinc-400"
+                            }`}
+                          >
+                            {item.failed}
+                          </p>
+                          <span
+                            className="hidden items-center justify-end text-zinc-300 group-hover:text-brand sm:flex"
+                            aria-hidden
+                          >
+                            <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                            </svg>
+                          </span>
+                          <div className="flex gap-4 border-t border-border pt-3 sm:hidden">
+                            <Count label="Sent" value={item.sent} tone="good" />
+                            <Count label="Failed" value={item.failed} tone={item.failed > 0 ? "bad" : "muted"} />
+                            <Count label="Left" value={item.pending} tone={item.pending > 0 ? "wait" : "muted"} />
+                          </div>
+                          <div className="sm:hidden">
+                            <ProgressBar value={progress} />
+                          </div>
+                        </button>
+                        {showActions && (
+                          <div className="flex shrink-0 gap-2 border-t border-border bg-brand-muted/20 px-4 py-3 sm:w-44 sm:flex-col sm:justify-center sm:border-l sm:border-t-0 sm:px-3">
+                            {item.status === "sending" ? (
+                              <button
+                                type="button"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  void handlePause(item.id);
+                                }}
+                                disabled={actionBusy}
+                                className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs font-semibold text-amber-800 hover:bg-amber-100 disabled:opacity-50"
+                              >
+                                Pause
+                              </button>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  goToCampaign(item.id, true);
+                                }}
+                                className="rounded-lg bg-brand px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand-hover"
+                              >
+                                Resume
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                goToCampaign(item.id);
+                              }}
+                              className="rounded-lg border border-border bg-surface px-3 py-1.5 text-xs font-medium text-zinc-600 hover:bg-white"
+                            >
+                              Open
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+              <div className="border-t border-border px-5">
+                <PaginationBar
+                  page={listPage}
+                  totalPages={listTotalPages}
+                  total={listTotal}
+                  onPageChange={setListPage}
+                  disabled={listLoading}
+                  noun="campaigns"
+                />
+              </div>
+            </section>
+          )}
         </>
       )}
 
       {view === "create" && (
         <>
-          <CampaignsBackButton onClick={() => setView("list")} />
+          <CreateCampaignSteps />
 
-          <section className="rounded-2xl border border-border bg-surface p-4 shadow-sm sm:p-6">
-            <h2 className="mb-1 text-sm font-semibold uppercase tracking-wide text-brand">
-              Step 1
-            </h2>
-            <p className="mb-4 text-base font-medium text-foreground">Name the campaign</p>
+          <div className="space-y-6 rounded-2xl border border-border bg-surface p-4 shadow-sm sm:p-6">
+          <section>
+            <h2 className="text-sm font-semibold text-foreground">Campaign name</h2>
+            <p className="mb-3 mt-0.5 text-xs text-zinc-500">
+              A short label you will recognize in the list later.
+            </p>
             <input
               value={name}
               onChange={(event) => setName(event.target.value)}
@@ -931,11 +1005,11 @@ export default function Campaigns() {
             />
           </section>
 
-          <section className="rounded-2xl border border-border bg-surface p-4 shadow-sm sm:p-6">
-            <h2 className="mb-1 text-sm font-semibold uppercase tracking-wide text-brand">
-              Step 2
-            </h2>
-            <p className="mb-4 text-base font-medium text-foreground">Import contacts</p>
+          <section className="border-t border-border pt-6">
+            <h2 className="text-sm font-semibold text-foreground">Audience</h2>
+            <p className="mb-3 mt-0.5 text-xs text-zinc-500">
+              Upload a spreadsheet with names (optional) and phone numbers.
+            </p>
             <div
               className={`flex cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed px-6 py-12 transition-colors ${
                 dragOver
@@ -1002,11 +1076,11 @@ export default function Campaigns() {
             )}
           </section>
 
-          <section className="rounded-2xl border border-border bg-surface p-4 shadow-sm sm:p-6">
-            <h2 className="mb-1 text-sm font-semibold uppercase tracking-wide text-brand">
-              Step 3
-            </h2>
-            <p className="mb-4 text-base font-medium text-foreground">Write the message</p>
+          <section className="border-t border-border pt-6">
+            <h2 className="text-sm font-semibold text-foreground">Message</h2>
+            <p className="mb-3 mt-0.5 text-xs text-zinc-500">
+              This SMS is sent to every contact in the file.
+            </p>
             <textarea
               value={message}
               onChange={(event) => setMessage(event.target.value)}
@@ -1022,11 +1096,14 @@ export default function Campaigns() {
             </p>
           </section>
 
-          <SkipAlreadySentCheckbox
-            checked={skipAlreadySent}
-            onChange={setSkipAlreadySent}
-            disabled={starting}
-          />
+          <div className="border-t border-border pt-6">
+            <SkipAlreadySentCheckbox
+              checked={skipAlreadySent}
+              onChange={setSkipAlreadySent}
+              disabled={starting}
+            />
+          </div>
+          </div>
 
           {formError && (
             <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
@@ -1034,25 +1111,35 @@ export default function Campaigns() {
             </div>
           )}
 
-          <div className="flex flex-col gap-3 sm:flex-row">
+          <div className="flex flex-col-reverse gap-3 border-t border-border pt-6 sm:flex-row sm:items-center sm:justify-between">
             <button
               type="button"
-              onClick={() => void handleStart()}
-              disabled={starting || !name.trim() || !message.trim() || contacts.length === 0}
-              className="flex-1 rounded-xl bg-brand px-6 py-3 text-sm font-semibold text-white transition-colors hover:bg-brand-hover disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {starting
-                ? "Starting campaign..."
-                : `Start campaign · ${contacts.length || 0} contact${contacts.length === 1 ? "" : "s"}`}
-            </button>
-            <button
-              type="button"
-              onClick={handleClearForm}
+              onClick={() => router.push(CAMPAIGN_ROUTES.list)}
               disabled={starting}
-              className="rounded-xl border border-border px-6 py-3 text-sm font-medium text-zinc-600 transition-colors hover:bg-brand-light"
+              className="text-sm font-medium text-zinc-500 transition-colors hover:text-foreground disabled:opacity-50"
             >
-              Clear
+              Cancel
             </button>
+            <div className="flex flex-col gap-3 sm:flex-row">
+              <button
+                type="button"
+                onClick={handleClearForm}
+                disabled={starting}
+                className="rounded-xl border border-border px-5 py-2.5 text-sm font-medium text-zinc-600 transition-colors hover:bg-brand-light disabled:opacity-50"
+              >
+                Clear form
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleStart()}
+                disabled={starting || !name.trim() || !message.trim() || contacts.length === 0}
+                className="rounded-xl bg-brand px-6 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-brand-hover disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {starting
+                  ? "Starting…"
+                  : `Start · ${contacts.length || 0} contact${contacts.length === 1 ? "" : "s"}`}
+              </button>
+            </div>
           </div>
           <p className="text-xs leading-relaxed text-zinc-400">
             Invalid numbers are marked failed and the rest of the campaign keeps going. When
@@ -1064,8 +1151,6 @@ export default function Campaigns() {
 
       {view === "detail" && (
         <>
-          <CampaignsBackButton onClick={handleBack} />
-
           {detailLoading && !campaign && (
             <div className="h-64 animate-pulse rounded-2xl border border-border bg-surface" />
           )}
@@ -1180,19 +1265,13 @@ function CampaignDetail({
   return (
     <div className="space-y-4">
       <section className="rounded-2xl border border-border bg-surface p-4 shadow-sm sm:p-6">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <h2 className="truncate text-xl font-semibold text-foreground">{campaign.name}</h2>
-            <p className="mt-1 text-xs text-zinc-400">
-              {formatWhen(campaign.createdAt)}
-              {campaign.createdByName ? ` · ${campaign.createdByName}` : ""}
-              {campaign.sourceFileName ? ` · ${campaign.sourceFileName}` : ""}
-            </p>
-          </div>
-          <StatusBadge status={sending && campaign.status !== "completed" ? "sending" : campaign.status} />
-        </div>
+        <p className="text-xs text-zinc-400">
+          {formatWhen(campaign.createdAt)}
+          {campaign.createdByName ? ` · ${campaign.createdByName}` : ""}
+          {campaign.sourceFileName ? ` · ${campaign.sourceFileName}` : ""}
+        </p>
 
-        <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4" aria-live="polite">
+        <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4" aria-live="polite">
           <div className="rounded-2xl border border-border bg-background px-4 py-3">
             <p className="text-[11px] font-medium uppercase tracking-wide text-zinc-400">Total</p>
             <p className="mt-1 text-2xl font-semibold tabular-nums text-foreground">{campaign.total}</p>
@@ -1322,8 +1401,11 @@ function CampaignDetail({
       </section>
 
       <section className="rounded-2xl border border-border bg-surface p-4 shadow-sm sm:p-6">
-        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-          <h3 className="text-sm font-semibold text-foreground">Delivery</h3>
+        <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h3 className="text-sm font-semibold text-foreground">Delivery log</h3>
+            <p className="mt-0.5 text-xs text-zinc-500">Per-contact send results</p>
+          </div>
           <div className="flex rounded-xl bg-brand-muted p-1 text-xs font-medium">
             {(
               [

@@ -18,6 +18,12 @@ function isPublicPath(pathname: string): boolean {
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
+  if (pathname === "/bulk" || pathname.startsWith("/bulk/")) {
+    const url = request.nextUrl.clone();
+    url.pathname = pathname.replace(/^\/bulk/, "/campaign");
+    return NextResponse.redirect(url);
+  }
+
   if (
     isPublicPath(pathname) ||
     pathname.startsWith("/_next") ||

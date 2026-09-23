@@ -5,6 +5,8 @@ import ConversationList from "@/components/ConversationList";
 import LiveCallBar from "@/components/LiveCallBar";
 import { useVoiceCall } from "@/components/VoiceCallProvider";
 import { useIsMobile } from "@/hooks/useIsMobile";
+import { highlightStopWithOtherReply } from "@/lib/filters";
+import { isStopMessage } from "@/lib/stop";
 import type { ChatMessage, Conversation } from "@/lib/messages";
 import { conversationLabel } from "@/lib/messages";
 import { formatPhoneDisplay, normalizePhone } from "@/lib/phone";
@@ -13,6 +15,13 @@ interface CurrentUser {
   id: string;
   role: "admin" | "employee";
   fullName: string;
+}
+
+interface TeamMember {
+  id: string;
+  fullName: string;
+  email: string;
+  role: string;
 }
 
 function formatTime(dateStr: string): string {
@@ -49,6 +58,19 @@ function formatDateDivider(dateStr: string): string {
   });
 }
 
+function conversationInitials(conv: Conversation): string {
+  const label = conversationLabel(conv).trim();
+  if (!label) return "?";
+  const parts = label.split(/\s+/).filter(Boolean);
+  if (parts.length >= 2) {
+    return `${parts[0][0] ?? ""}${parts[1][0] ?? ""}`.toUpperCase();
+  }
+  const single = parts[0] ?? label;
+  const digits = single.replace(/\D/g, "");
+  if (digits.length >= 2) return digits.slice(-2);
+  return single.slice(0, 2).toUpperCase();
+}
+
 function addMessageToConversations(
   conversations: Conversation[],
   message: ChatMessage,
@@ -72,6 +94,13 @@ function addMessageToConversations(
               lastMessage: message.body || "(media)",
               lastMessageAt: message.dateCreated,
               isBlank: false,
+              isStop:
+                c.isStop ||
+                (message.direction === "inbound" && isStopMessage(message.body)),
+              isClosed:
+                message.direction === "inbound" ? false : c.isClosed,
+              closedAt:
+                message.direction === "inbound" ? null : c.closedAt,
             }
           : c
       )
@@ -93,8 +122,11 @@ function addMessageToConversations(
       assignedToName: null,
       assignedToEmail: null,
       assignedAt: null,
-      isStop: false,
+      isStop:
+        message.direction === "inbound" && isStopMessage(message.body),
       isBlank: false,
+      isClosed: false,
+      closedAt: null,
     },
     ...conversations,
   ];
@@ -111,8 +143,12 @@ export default function ChatApp() {
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showClosed, setShowClosed] = useState(false);
   const [showStop, setShowStop] = useState(false);
   const [showBlank, setShowBlank] = useState(false);
+  const [closing, setClosing] = useState(false);
+  const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
+  const [assigning, setAssigning] = useState(false);
 
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const shouldAutoScrollRef = useRef(true);
@@ -122,16 +158,39 @@ export default function ChatApp() {
     voice.initialize();
   }, [voice.initialize]);
 
+  useEffect(() => {
+    if (currentUser?.role !== "admin") {
+      setTeamMembers([]);
+      return;
+    }
+
+    fetch("/api/users")
+      .then((res) => res.json())
+      .then((data) => {
+        if (Array.isArray(data.users)) {
+          setTeamMembers(data.users);
+        }
+      })
+      .catch(() => {
+        // Assignment dropdown stays empty until the next refresh.
+      });
+  }, [currentUser?.role]);
+
   const selectedConversation = conversations.find(
     (c) => normalizePhone(c.phone) === normalizePhone(selectedPhone || "")
   );
 
   const canReply =
     selectedConversation &&
+    !selectedConversation.isClosed &&
     currentUser &&
     (currentUser.role === "admin" ||
       !selectedConversation.assignedToUserId ||
       selectedConversation.assignedToUserId === currentUser.id);
+
+  const selectedStopWithOtherReply =
+    selectedConversation &&
+    highlightStopWithOtherReply(selectedConversation, showStop);
 
   const scrollToBottom = useCallback((smooth = false) => {
     const el = messagesContainerRef.current;
@@ -153,8 +212,11 @@ export default function ChatApp() {
   const fetchConversations = useCallback(async () => {
     try {
       const params = new URLSearchParams();
-      if (showStop) params.set("showStop", "true");
-      if (showBlank) params.set("showBlank", "true");
+      if (showClosed) params.set("showClosed", "true");
+      else {
+        if (showStop) params.set("showStop", "true");
+        if (showBlank) params.set("showBlank", "true");
+      }
 
       const res = await fetch(`/api/twilio/messages?${params}`, {
         cache: "no-store",
@@ -188,7 +250,7 @@ export default function ChatApp() {
     } finally {
       setLoading(false);
     }
-  }, [showStop, showBlank]);
+  }, [showClosed, showStop, showBlank]);
 
   const syncAfterSend = useCallback(async () => {
     const delays = [1000, 2500, 5000];
@@ -217,6 +279,109 @@ export default function ChatApp() {
 
   const handleBackToList = () => {
     setMobilePane("list");
+  };
+
+  const patchConversationAssignment = (
+    phone: string,
+    assignment: {
+      assignedToUserId: string | null;
+      assignedToName: string | null;
+      assignedToEmail: string | null;
+      assignedAt: string | null;
+    }
+  ) => {
+    const normalized = normalizePhone(phone);
+    setConversations((prev) =>
+      prev.map((c) =>
+        normalizePhone(c.phone) === normalized ? { ...c, ...assignment } : c
+      )
+    );
+  };
+
+  const patchConversationClosed = (
+    phone: string,
+    closed: boolean,
+    closedAt: string | null
+  ) => {
+    const normalized = normalizePhone(phone);
+    setConversations((prev) =>
+      prev.map((c) =>
+        normalizePhone(c.phone) === normalized
+          ? { ...c, isClosed: closed, closedAt }
+          : c
+      )
+    );
+  };
+
+  const handleSetClosed = async (closed: boolean) => {
+    if (!selectedConversation) return;
+
+    setClosing(true);
+    try {
+      const res = await fetch("/api/conversations/close", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          phone: selectedConversation.phone,
+          closed,
+        }),
+      });
+      const data = await res.json();
+
+      if (!res.ok) {
+        setError(data.error || "Could not update conversation");
+        return;
+      }
+
+      const closedAt = data.assignment?.closedAt ?? null;
+      patchConversationClosed(selectedConversation.phone, closed, closedAt);
+      setError(null);
+
+      if (closed && !showClosed) {
+        setSelectedPhone(null);
+        if (isMobile) setMobilePane("list");
+      } else {
+        await fetchConversations();
+      }
+    } catch {
+      setError("Network error while updating conversation.");
+    } finally {
+      setClosing(false);
+    }
+  };
+
+  const handleAssignConversation = async (userId: string) => {
+    if (!selectedConversation || currentUser?.role !== "admin") return;
+
+    setAssigning(true);
+    try {
+      const res = await fetch("/api/conversations/assign", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          phone: selectedConversation.phone,
+          userId: userId || null,
+        }),
+      });
+      const data = await res.json();
+
+      if (!res.ok) {
+        setError(data.error || "Could not update assignment");
+        return;
+      }
+
+      patchConversationAssignment(selectedConversation.phone, {
+        assignedToUserId: data.assignment.assignedToUserId,
+        assignedToName: data.assignment.assignedToName,
+        assignedToEmail: data.assignment.assignedToEmail,
+        assignedAt: data.assignment.assignedAt,
+      });
+      setError(null);
+    } catch {
+      setError("Network error while assigning conversation.");
+    } finally {
+      setAssigning(false);
+    }
   };
 
   useEffect(() => {
@@ -313,18 +478,44 @@ export default function ChatApp() {
         <label className="flex cursor-pointer items-center gap-2 text-sm text-zinc-600">
           <input
             type="checkbox"
-            checked={showStop}
-            onChange={(e) => setShowStop(e.target.checked)}
+            checked={showClosed}
+            onChange={(e) => {
+              const next = e.target.checked;
+              setShowClosed(next);
+              if (next) {
+                setShowStop(false);
+                setShowBlank(false);
+              }
+            }}
             className="rounded border-border text-brand focus:ring-brand/30"
+          />
+          Closed
+        </label>
+        <label
+          className={`flex items-center gap-2 text-sm ${
+            showClosed ? "cursor-not-allowed text-zinc-400" : "cursor-pointer text-zinc-600"
+          }`}
+        >
+          <input
+            type="checkbox"
+            checked={showStop}
+            disabled={showClosed}
+            onChange={(e) => setShowStop(e.target.checked)}
+            className="rounded border-border text-brand focus:ring-brand/30 disabled:opacity-50"
           />
           STOP messages
         </label>
-        <label className="flex cursor-pointer items-center gap-2 text-sm text-zinc-600">
+        <label
+          className={`flex items-center gap-2 text-sm ${
+            showClosed ? "cursor-not-allowed text-zinc-400" : "cursor-pointer text-zinc-600"
+          }`}
+        >
           <input
             type="checkbox"
             checked={showBlank}
+            disabled={showClosed}
             onChange={(e) => setShowBlank(e.target.checked)}
-            className="rounded border-border text-brand focus:ring-brand/30"
+            className="rounded border-border text-brand focus:ring-brand/30 disabled:opacity-50"
           />
           No-reply chats
         </label>
@@ -339,9 +530,13 @@ export default function ChatApp() {
           }`}
         >
           <div className="shrink-0 border-b border-border px-4 py-3 sm:px-5 sm:py-4">
-            <h2 className="text-sm font-semibold text-foreground">Inbox</h2>
+            <h2 className="text-sm font-semibold text-foreground">
+              {showClosed ? "Closed" : "Inbox"}
+            </h2>
             <p className="text-xs text-zinc-400">
-              {conversations.length} conversations
+              {conversations.length}{" "}
+              {showClosed ? "closed" : ""} conversation
+              {conversations.length === 1 ? "" : "s"}
             </p>
           </div>
 
@@ -349,6 +544,7 @@ export default function ChatApp() {
             conversations={conversations}
             selectedPhone={selectedPhone}
             loading={loading}
+            showStopFilter={showStop && !showClosed}
             onSelect={handleSelectConversation}
             formatTime={formatTime}
           />
@@ -363,16 +559,16 @@ export default function ChatApp() {
           {selectedConversation ? (
             <>
               {/* Chat header */}
-              <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border bg-surface px-4 py-3 sm:px-6 sm:py-4">
-                <div className="flex min-w-0 items-center gap-2">
+              <header className="shrink-0 border-b border-border bg-surface px-3 py-2 sm:px-4">
+                <div className="flex items-center gap-2">
                   <button
                     type="button"
                     onClick={handleBackToList}
-                    className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-zinc-600 transition-colors hover:bg-brand-light lg:hidden"
+                    className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-zinc-500 transition-colors hover:bg-brand-light lg:hidden"
                     aria-label="Back to inbox"
                   >
                     <svg
-                      className="h-5 w-5"
+                      className="h-4 w-4"
                       fill="none"
                       viewBox="0 0 24 24"
                       stroke="currentColor"
@@ -385,61 +581,150 @@ export default function ChatApp() {
                       />
                     </svg>
                   </button>
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-semibold text-foreground sm:text-base">
+
+                  <div
+                    className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold ${
+                      selectedStopWithOtherReply
+                        ? "bg-emerald-100 text-emerald-800 ring-1 ring-emerald-200"
+                        : "bg-brand text-white"
+                    }`}
+                    aria-hidden
+                  >
+                    {conversationInitials(selectedConversation)}
+                  </div>
+
+                  <div className="min-w-0 flex-1">
+                    <h2
+                      className={`truncate text-sm font-semibold leading-tight ${
+                        selectedStopWithOtherReply
+                          ? "text-emerald-900"
+                          : "text-foreground"
+                      }`}
+                    >
                       {conversationLabel(selectedConversation)}
-                    </p>
-                    <p className="truncate text-xs text-zinc-400">
-                      {selectedConversation.contactName?.trim()
-                        ? `${formatPhoneDisplay(selectedConversation.phone)} · ${
-                            selectedConversation.assignedToName
-                              ? `Assigned to ${selectedConversation.assignedToName}`
-                              : "Unassigned — reply to claim"
-                          }`
-                        : selectedConversation.assignedToName
-                          ? `Assigned to ${selectedConversation.assignedToName}`
-                          : "Unassigned — reply to claim"}
+                      {selectedConversation.isClosed && (
+                        <span className="ml-1.5 text-[10px] font-medium uppercase tracking-wide text-zinc-400">
+                          · Closed
+                        </span>
+                      )}
+                    </h2>
+                    <p
+                      className={`truncate text-[11px] leading-tight ${
+                        selectedStopWithOtherReply
+                          ? "text-emerald-800/75"
+                          : "text-zinc-400"
+                      }`}
+                    >
+                      {formatPhoneDisplay(selectedConversation.phone)}
+                      <span className="text-zinc-300"> · </span>
+                      {selectedConversation.messages.length} msg
+                      {currentUser?.role !== "admin" && (
+                        <>
+                          <span className="text-zinc-300"> · </span>
+                          {selectedConversation.assignedToName
+                            ? selectedConversation.assignedToName
+                            : "Unassigned"}
+                        </>
+                      )}
                     </p>
                   </div>
-                </div>
-                <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
-                  {currentUser && (
-                    <button
-                      type="button"
-                      onClick={() =>
-                        voice.startCall({
-                          to: normalizePhone(selectedConversation.phone),
-                          user: {
-                            userId: currentUser.id,
-                            fullName: currentUser.fullName,
-                          },
-                        })
-                      }
-                      disabled={voice.isInCall}
-                      className="flex items-center gap-1.5 rounded-full border border-brand/20 bg-brand-muted px-3 py-1.5 text-xs font-medium text-brand transition-colors hover:bg-brand hover:text-white disabled:opacity-50"
-                      title="Start live call"
-                    >
-                      <svg
-                        className="h-3.5 w-3.5"
-                        fill="none"
-                        viewBox="0 0 24 24"
-                        stroke="currentColor"
+
+                  <div className="flex shrink-0 items-center gap-1">
+                    {currentUser?.role === "admin" && (
+                      <select
+                        value={selectedConversation.assignedToUserId ?? ""}
+                        disabled={assigning}
+                        onChange={(event) =>
+                          void handleAssignConversation(event.target.value)
+                        }
+                        aria-label="Assign conversation"
+                        className="hidden max-w-[8.5rem] cursor-pointer truncate rounded-lg border border-border bg-white py-1 pl-1.5 pr-5 text-[11px] font-medium text-foreground focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand/20 disabled:opacity-50 sm:block"
                       >
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth={2}
-                          d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z"
-                        />
-                      </svg>
-                      Call
-                    </button>
-                  )}
-                  <span className="hidden rounded-full bg-brand-muted px-3 py-1 text-xs font-medium text-brand sm:inline">
-                    {selectedConversation.messages.length} messages
-                  </span>
+                        <option value="">Unassigned</option>
+                        {teamMembers.map((member) => (
+                          <option key={member.id} value={member.id}>
+                            {member.fullName}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+
+                    {currentUser && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          voice.startCall({
+                            to: normalizePhone(selectedConversation.phone),
+                            user: {
+                              userId: currentUser.id,
+                              fullName: currentUser.fullName,
+                            },
+                          })
+                        }
+                        disabled={voice.isInCall}
+                        className="flex h-8 w-8 items-center justify-center rounded-lg border border-brand/20 text-brand transition-colors hover:bg-brand hover:text-white disabled:opacity-50"
+                        title="Call"
+                        aria-label="Call contact"
+                      >
+                        <svg
+                          className="h-3.5 w-3.5"
+                          fill="none"
+                          viewBox="0 0 24 24"
+                          stroke="currentColor"
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={2}
+                            d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z"
+                          />
+                        </svg>
+                      </button>
+                    )}
+
+                    {selectedConversation.isClosed ? (
+                      <button
+                        type="button"
+                        onClick={() => void handleSetClosed(false)}
+                        disabled={closing}
+                        className="rounded-lg bg-brand px-2 py-1 text-[11px] font-semibold text-white transition-colors hover:bg-brand-hover disabled:opacity-50"
+                      >
+                        Reopen
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => void handleSetClosed(true)}
+                        disabled={closing}
+                        className="rounded-lg border border-red-200 bg-red-50 px-2 py-1 text-[11px] font-semibold text-red-600 transition-colors hover:border-red-300 hover:bg-red-100 disabled:opacity-50"
+                      >
+                        Close
+                      </button>
+                    )}
+                  </div>
                 </div>
-              </div>
+
+                {currentUser?.role === "admin" && (
+                  <div className="mt-1.5 flex sm:hidden">
+                    <select
+                      value={selectedConversation.assignedToUserId ?? ""}
+                      disabled={assigning}
+                      onChange={(event) =>
+                        void handleAssignConversation(event.target.value)
+                      }
+                      aria-label="Assign conversation"
+                      className="w-full cursor-pointer rounded-lg border border-border bg-white py-1 pl-2 pr-6 text-xs font-medium text-foreground focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand/20 disabled:opacity-50"
+                    >
+                      <option value="">Unassigned</option>
+                      {teamMembers.map((member) => (
+                        <option key={member.id} value={member.id}>
+                          {member.fullName}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+              </header>
 
               {/* Messages — scroll contained here only */}
               <div
@@ -548,6 +833,10 @@ export default function ChatApp() {
                     </button>
                   </div>
                 </form>
+              ) : selectedConversation.isClosed ? (
+                <div className="shrink-0 border-t border-border bg-zinc-50 px-4 py-3 text-center text-sm text-zinc-600 sm:px-6 sm:py-4">
+                  This conversation is closed. Reopen it to send messages.
+                </div>
               ) : (
                 <div className="shrink-0 border-t border-border bg-brand-muted/30 px-4 py-3 text-center text-sm text-zinc-500 sm:px-6 sm:py-4">
                   Assigned to {selectedConversation.assignedToName}

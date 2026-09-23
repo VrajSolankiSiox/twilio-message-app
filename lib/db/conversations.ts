@@ -8,6 +8,9 @@ export interface ConversationAssignment {
   assignedToName: string | null;
   assignedToEmail: string | null;
   assignedAt: Date | null;
+  closedAt: Date | null;
+  closedByUserId: string | null;
+  closedByName: string | null;
   updatedAt: Date;
 }
 
@@ -53,6 +56,9 @@ export async function ensureConversationExists(phone: string): Promise<void> {
         assignedToName: null,
         assignedToEmail: null,
         assignedAt: null,
+        closedAt: null,
+        closedByUserId: null,
+        closedByName: null,
         updatedAt: new Date(),
       },
     },
@@ -98,6 +104,100 @@ export async function assignConversation(
   return updated;
 }
 
+export async function setConversationAssignee(
+  phone: string,
+  assignee: { userId: string; fullName: string; email: string } | null
+): Promise<ConversationAssignment> {
+  await ensureIndexes();
+  const normalized = normalizePhone(phone);
+  const now = new Date();
+
+  await ensureConversationExists(normalized);
+  const db = await getDb();
+
+  const assignmentFields = assignee
+    ? {
+        assignedToUserId: assignee.userId,
+        assignedToName: assignee.fullName,
+        assignedToEmail: assignee.email,
+        assignedAt: now,
+        updatedAt: now,
+      }
+    : {
+        assignedToUserId: null,
+        assignedToName: null,
+        assignedToEmail: null,
+        assignedAt: null,
+        updatedAt: now,
+      };
+
+  await db
+    .collection<ConversationAssignment>("conversations")
+    .updateOne({ phone: normalized }, { $set: assignmentFields });
+
+  const updated = await getAssignment(normalized);
+  if (!updated) {
+    throw new Error("Failed to update assignment");
+  }
+  return updated;
+}
+
+export async function setConversationClosed(
+  phone: string,
+  closed: boolean,
+  closedBy?: { userId: string; fullName: string }
+): Promise<ConversationAssignment> {
+  await ensureIndexes();
+  const normalized = normalizePhone(phone);
+  const now = new Date();
+
+  await ensureConversationExists(normalized);
+  const db = await getDb();
+
+  const fields = closed
+    ? {
+        closedAt: now,
+        closedByUserId: closedBy?.userId ?? null,
+        closedByName: closedBy?.fullName ?? null,
+        updatedAt: now,
+      }
+    : {
+        closedAt: null,
+        closedByUserId: null,
+        closedByName: null,
+        updatedAt: now,
+      };
+
+  await db
+    .collection<ConversationAssignment>("conversations")
+    .updateOne({ phone: normalized }, { $set: fields });
+
+  const updated = await getAssignment(normalized);
+  if (!updated) {
+    throw new Error("Failed to update closed state");
+  }
+  return updated;
+}
+
+export async function reopenConversationIfClosed(phone: string): Promise<void> {
+  await ensureIndexes();
+  const normalized = normalizePhone(phone);
+  const db = await getDb();
+  const now = new Date();
+
+  await db.collection<ConversationAssignment>("conversations").updateOne(
+    { phone: normalized, closedAt: { $ne: null } },
+    {
+      $set: {
+        closedAt: null,
+        closedByUserId: null,
+        closedByName: null,
+        updatedAt: now,
+      },
+    }
+  );
+}
+
 export async function upsertContactNames(
   contacts: Array<{ phone: string; name: string }>
 ): Promise<void> {
@@ -122,6 +222,9 @@ export async function upsertContactNames(
               assignedToName: null,
               assignedToEmail: null,
               assignedAt: null,
+              closedAt: null,
+              closedByUserId: null,
+              closedByName: null,
             },
           },
           upsert: true,

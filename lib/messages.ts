@@ -1,4 +1,5 @@
 import { formatPhoneDisplay, normalizePhone } from "./phone";
+import { isStopMessage } from "./stop";
 
 export interface ChatMessage {
   sid: string;
@@ -23,6 +24,8 @@ export interface Conversation {
   assignedAt: string | null;
   isStop: boolean;
   isBlank: boolean;
+  isClosed: boolean;
+  closedAt: string | null;
 }
 
 export function conversationLabel(conversation: Conversation): string {
@@ -51,6 +54,7 @@ export function buildConversations(
     assignedToName: string | null;
     assignedToEmail: string | null;
     assignedAt: Date | null;
+    closedAt?: Date | null;
   }>
 ): Conversation[] {
   const map = new Map<string, ChatMessage[]>();
@@ -87,11 +91,13 @@ export function buildConversations(
         assignedToEmail: assignment?.assignedToEmail ?? null,
         assignedAt: assignment?.assignedAt?.toISOString() ?? null,
         isStop: sorted.some(
-          (m) => m.direction === "inbound" && m.body.trim().toLowerCase() === "stop"
+          (m) => m.direction === "inbound" && isStopMessage(m.body)
         ),
         isBlank:
           sorted.some((m) => m.direction === "outbound") &&
           !sorted.some((m) => m.direction === "inbound"),
+        isClosed: Boolean(assignment?.closedAt),
+        closedAt: assignment?.closedAt?.toISOString() ?? null,
       };
 
       return conv;

@@ -37,6 +37,11 @@ export async function saveMessage(
     message.direction === "inbound" ? message.from : message.to;
   await ensureConversationExists(contactPhone);
 
+  if (message.direction === "inbound") {
+    const { reopenConversationIfClosed } = await import("@/lib/db/conversations");
+    await reopenConversationIfClosed(contactPhone);
+  }
+
   const db = await getDb();
 
   await db.collection<StoredMessage>("messages").updateOne(
