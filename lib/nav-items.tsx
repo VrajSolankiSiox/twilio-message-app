@@ -1,4 +1,5 @@
 import type { NavTab } from "@/components/Sidebar";
+import { TAB_ORDER } from "@/lib/navigation";
 
 export interface NavItem {
   id: NavTab;
@@ -8,8 +9,8 @@ export interface NavItem {
   icon: React.ReactNode;
 }
 
-export const NAV_ITEMS: NavItem[] = [
-  {
+const NAV_BY_ID: Record<NavTab, NavItem> = {
+  messages: {
     id: "messages",
     label: "Messages",
     shortLabel: "Inbox",
@@ -24,7 +25,7 @@ export const NAV_ITEMS: NavItem[] = [
       </svg>
     ),
   },
-  {
+  calls: {
     id: "calls",
     label: "Calls",
     shortLabel: "Calls",
@@ -39,7 +40,7 @@ export const NAV_ITEMS: NavItem[] = [
       </svg>
     ),
   },
-  {
+  campaign: {
     id: "campaign",
     label: "Campaigns",
     shortLabel: "Campaigns",
@@ -55,7 +56,23 @@ export const NAV_ITEMS: NavItem[] = [
       </svg>
     ),
   },
-  {
+  cost: {
+    id: "cost",
+    label: "Cost",
+    shortLabel: "Cost",
+    adminOnly: true,
+    icon: (
+      <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth={1.75}
+          d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+        />
+      </svg>
+    ),
+  },
+  team: {
     id: "team",
     label: "Teams",
     shortLabel: "Teams",
@@ -70,7 +87,7 @@ export const NAV_ITEMS: NavItem[] = [
       </svg>
     ),
   },
-  {
+  invoices: {
     id: "invoices",
     label: "Invoices",
     shortLabel: "Invoice",
@@ -86,4 +103,7 @@ export const NAV_ITEMS: NavItem[] = [
       </svg>
     ),
   },
-];
+};
+
+/** Stable order — must include every NavTab (see TAB_ORDER). */
+export const NAV_ITEMS: NavItem[] = TAB_ORDER.map((id) => NAV_BY_ID[id]);

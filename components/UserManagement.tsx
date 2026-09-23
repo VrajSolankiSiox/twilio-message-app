@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useState } from "react";
+import { APP_INPUT, APP_LABEL, APP_SECTION_LG, APP_SECTION_TITLE } from "@/lib/app-layout";
 
 interface User {
   id: string;
@@ -9,9 +10,6 @@ interface User {
   role: string;
   createdAt: string;
 }
-
-const inputClass =
-  "w-full rounded-xl border border-border bg-white px-4 py-2.5 text-sm text-foreground placeholder:text-zinc-400 focus:border-brand focus:ring-2 focus:ring-brand/20";
 
 interface UserManagementProps {
   canInvite?: boolean;
@@ -82,10 +80,8 @@ export default function UserManagement({ canInvite = false }: UserManagementProp
   return (
     <div className="space-y-6">
       {canInvite && (
-        <section className="rounded-2xl border border-border bg-surface p-4 shadow-sm sm:p-6">
-          <h2 className="mb-1 text-sm font-semibold uppercase tracking-wide text-brand">
-            Invite
-          </h2>
+        <section className={APP_SECTION_LG}>
+          <h2 className={`mb-1 ${APP_SECTION_TITLE}`}>Invite</h2>
           <p className="mb-5 text-base font-medium text-foreground">
             Add a new team member
           </p>
@@ -93,7 +89,7 @@ export default function UserManagement({ canInvite = false }: UserManagementProp
           <form onSubmit={handleInvite} className="space-y-4">
             <div className="grid gap-4 sm:grid-cols-3">
               <div>
-                <label className="mb-1.5 block text-sm font-medium text-zinc-700">
+                <label className={APP_LABEL}>
                   Full Name
                 </label>
                 <input
@@ -102,11 +98,11 @@ export default function UserManagement({ canInvite = false }: UserManagementProp
                   onChange={(e) => setFullName(e.target.value)}
                   required
                   placeholder="John Doe"
-                  className={inputClass}
+                  className={APP_INPUT}
                 />
               </div>
               <div>
-                <label className="mb-1.5 block text-sm font-medium text-zinc-700">
+                <label className={APP_LABEL}>
                   Email
                 </label>
                 <input
@@ -115,11 +111,11 @@ export default function UserManagement({ canInvite = false }: UserManagementProp
                   onChange={(e) => setEmail(e.target.value)}
                   required
                   placeholder="john@revenelx.com"
-                  className={inputClass}
+                  className={APP_INPUT}
                 />
               </div>
               <div>
-                <label className="mb-1.5 block text-sm font-medium text-zinc-700">
+                <label className={APP_LABEL}>
                   Password
                 </label>
                 <input
@@ -129,7 +125,7 @@ export default function UserManagement({ canInvite = false }: UserManagementProp
                   required
                   minLength={6}
                   placeholder="Min 6 characters"
-                  className={inputClass}
+                  className={APP_INPUT}
                 />
               </div>
             </div>
@@ -162,8 +158,8 @@ export default function UserManagement({ canInvite = false }: UserManagementProp
         </div>
       )}
 
-      <section className="rounded-2xl border border-border bg-surface p-4 shadow-sm sm:p-6">
-        <h2 className="mb-4 text-sm font-semibold uppercase tracking-wide text-brand">
+      <section className={APP_SECTION_LG}>
+        <h2 className={`mb-4 ${APP_SECTION_TITLE}`}>
           Team Members ({users.length})
         </h2>
 

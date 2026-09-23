@@ -11,11 +11,7 @@ import {
   INVOICE_LOGO_PATH,
 } from "@/lib/invoice/constants";
 import type { InvoiceData, InvoiceLineItem } from "@/lib/invoice/types";
-
-const inputClass =
-  "w-full rounded-xl border border-border bg-white px-4 py-2.5 text-sm text-foreground placeholder:text-zinc-400 focus:border-brand focus:ring-2 focus:ring-brand/20";
-
-const labelClass = "mb-1.5 block text-sm font-medium text-zinc-700";
+import { APP_INPUT, APP_LABEL, APP_SECTION_LG, APP_SECTION_TITLE } from "@/lib/app-layout";
 
 function Section({
   title,
@@ -25,10 +21,8 @@ function Section({
   children: React.ReactNode;
 }) {
   return (
-    <section className="rounded-2xl border border-border bg-surface p-4 shadow-sm sm:p-6">
-      <h2 className="mb-4 text-sm font-semibold uppercase tracking-wide text-brand">
-        {title}
-      </h2>
+    <section className={APP_SECTION_LG}>
+      <h2 className={`mb-4 ${APP_SECTION_TITLE}`}>{title}</h2>
       {children}
     </section>
   );
@@ -121,35 +115,35 @@ export default function InvoiceGenerator() {
   };
 
   return (
-    <div className="mx-auto max-w-4xl space-y-6 pb-8">
+    <div className="space-y-6">
       <Section title="Invoice Details">
         <div className="grid gap-4 sm:grid-cols-3">
           <div>
-            <label className={labelClass}>Invoice Date</label>
+            <label className={APP_LABEL}>Invoice Date</label>
             <input
               type="text"
               value={form.invoiceDate}
               onChange={(e) => updateField("invoiceDate", e.target.value)}
-              className={inputClass}
+              className={APP_INPUT}
               placeholder="MM/DD/YYYY"
             />
           </div>
           <div>
-            <label className={labelClass}>Payment Terms</label>
+            <label className={APP_LABEL}>Payment Terms</label>
             <input
               type="text"
               value={form.paymentTerms}
               onChange={(e) => updateField("paymentTerms", e.target.value)}
-              className={inputClass}
+              className={APP_INPUT}
             />
           </div>
           <div>
-            <label className={labelClass}>Service Period</label>
+            <label className={APP_LABEL}>Service Period</label>
             <input
               type="text"
               value={form.servicePeriod}
               onChange={(e) => updateField("servicePeriod", e.target.value)}
-              className={inputClass}
+              className={APP_INPUT}
             />
           </div>
         </div>
@@ -159,39 +153,39 @@ export default function InvoiceGenerator() {
         <Section title="Bill To">
           <div className="space-y-4">
             <div>
-              <label className={labelClass}>Name</label>
+              <label className={APP_LABEL}>Name</label>
               <input
                 type="text"
                 value={form.billToName}
                 onChange={(e) => updateField("billToName", e.target.value)}
-                className={inputClass}
+                className={APP_INPUT}
               />
             </div>
             <div>
-              <label className={labelClass}>Company</label>
+              <label className={APP_LABEL}>Company</label>
               <input
                 type="text"
                 value={form.billToCompany}
                 onChange={(e) => updateField("billToCompany", e.target.value)}
-                className={inputClass}
+                className={APP_INPUT}
               />
             </div>
             <div>
-              <label className={labelClass}>Address</label>
+              <label className={APP_LABEL}>Address</label>
               <textarea
                 value={form.billToAddress}
                 onChange={(e) => updateField("billToAddress", e.target.value)}
                 rows={2}
-                className={`${inputClass} resize-none`}
+                className={`${APP_INPUT} resize-none`}
               />
             </div>
             <div>
-              <label className={labelClass}>Email</label>
+              <label className={APP_LABEL}>Email</label>
               <input
                 type="email"
                 value={form.billToEmail}
                 onChange={(e) => updateField("billToEmail", e.target.value)}
-                className={inputClass}
+                className={APP_INPUT}
               />
             </div>
           </div>
@@ -200,39 +194,39 @@ export default function InvoiceGenerator() {
         <Section title="Service Details">
           <div className="space-y-4">
             <div>
-              <label className={labelClass}>VA Package</label>
+              <label className={APP_LABEL}>VA Package</label>
               <input
                 type="text"
                 value={form.vaPackage}
                 onChange={(e) => updateField("vaPackage", e.target.value)}
-                className={inputClass}
+                className={APP_INPUT}
               />
             </div>
             <div>
-              <label className={labelClass}>Assigned Resource(s)</label>
+              <label className={APP_LABEL}>Assigned Resource(s)</label>
               <input
                 type="text"
                 value={form.assignedResources}
                 onChange={(e) => updateField("assignedResources", e.target.value)}
-                className={inputClass}
+                className={APP_INPUT}
               />
             </div>
             <div>
-              <label className={labelClass}>Service Type</label>
+              <label className={APP_LABEL}>Service Type</label>
               <input
                 type="text"
                 value={form.serviceType}
                 onChange={(e) => updateField("serviceType", e.target.value)}
-                className={inputClass}
+                className={APP_INPUT}
               />
             </div>
             <div>
-              <label className={labelClass}>Billing Frequency</label>
+              <label className={APP_LABEL}>Billing Frequency</label>
               <input
                 type="text"
                 value={form.billingFrequency}
                 onChange={(e) => updateField("billingFrequency", e.target.value)}
-                className={inputClass}
+                className={APP_INPUT}
               />
             </div>
           </div>
@@ -262,40 +256,40 @@ export default function InvoiceGenerator() {
               </div>
               <div className="grid gap-4 sm:grid-cols-2">
                 <div className="sm:col-span-2">
-                  <label className={labelClass}>Description</label>
+                  <label className={APP_LABEL}>Description</label>
                   <input
                     type="text"
                     value={item.description}
                     onChange={(e) =>
                       updateLineItem(index, "description", e.target.value)
                     }
-                    className={inputClass}
+                    className={APP_INPUT}
                   />
                 </div>
                 <div className="sm:col-span-2">
-                  <label className={labelClass}>Sub-description</label>
+                  <label className={APP_LABEL}>Sub-description</label>
                   <input
                     type="text"
                     value={item.subDescription}
                     onChange={(e) =>
                       updateLineItem(index, "subDescription", e.target.value)
                     }
-                    className={inputClass}
+                    className={APP_INPUT}
                   />
                 </div>
                 <div>
-                  <label className={labelClass}>Service Period</label>
+                  <label className={APP_LABEL}>Service Period</label>
                   <input
                     type="text"
                     value={item.servicePeriod}
                     onChange={(e) =>
                       updateLineItem(index, "servicePeriod", e.target.value)
                     }
-                    className={inputClass}
+                    className={APP_INPUT}
                   />
                 </div>
                 <div>
-                  <label className={labelClass}>Quantity</label>
+                  <label className={APP_LABEL}>Quantity</label>
                   <input
                     type="number"
                     min={1}
@@ -303,11 +297,11 @@ export default function InvoiceGenerator() {
                     onChange={(e) =>
                       updateLineItem(index, "qty", Number(e.target.value) || 0)
                     }
-                    className={inputClass}
+                    className={APP_INPUT}
                   />
                 </div>
                 <div>
-                  <label className={labelClass}>Rate ($)</label>
+                  <label className={APP_LABEL}>Rate ($)</label>
                   <input
                     type="number"
                     min={0}
@@ -316,7 +310,7 @@ export default function InvoiceGenerator() {
                     onChange={(e) =>
                       updateLineItem(index, "rate", Number(e.target.value) || 0)
                     }
-                    className={inputClass}
+                    className={APP_INPUT}
                   />
                 </div>
                 <div className="flex items-end">
@@ -343,43 +337,43 @@ export default function InvoiceGenerator() {
       <Section title="Payment & Notes">
         <div className="space-y-4">
           <div>
-            <label className={labelClass}>Payment Terms Text</label>
+            <label className={APP_LABEL}>Payment Terms Text</label>
             <textarea
               value={form.paymentTermsText}
               onChange={(e) => updateField("paymentTermsText", e.target.value)}
               rows={3}
-              className={`${inputClass} resize-none`}
+              className={`${APP_INPUT} resize-none`}
             />
           </div>
           <div className="grid gap-4 sm:grid-cols-2">
             <div>
-              <label className={labelClass}>Payment Method</label>
+              <label className={APP_LABEL}>Payment Method</label>
               <input
                 type="text"
                 value={form.paymentMethod}
                 onChange={(e) => updateField("paymentMethod", e.target.value)}
-                className={inputClass}
+                className={APP_INPUT}
               />
             </div>
             <div>
-              <label className={labelClass}>Payment Instructions</label>
+              <label className={APP_LABEL}>Payment Instructions</label>
               <textarea
                 value={form.paymentInstructions}
                 onChange={(e) =>
                   updateField("paymentInstructions", e.target.value)
                 }
                 rows={2}
-                className={`${inputClass} resize-none`}
+                className={`${APP_INPUT} resize-none`}
               />
             </div>
           </div>
           <div>
-            <label className={labelClass}>Notes</label>
+            <label className={APP_LABEL}>Notes</label>
             <textarea
               value={form.notes}
               onChange={(e) => updateField("notes", e.target.value)}
               rows={2}
-              className={`${inputClass} resize-none`}
+              className={`${APP_INPUT} resize-none`}
             />
           </div>
         </div>

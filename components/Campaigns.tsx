@@ -17,12 +17,14 @@ import {
   campaignProgress,
   canResumeCampaign,
   estimateSms,
+  type CampaignCostSummary,
   type CampaignStatus,
   type CampaignSummary,
   type RecipientView,
   type TickStopReason,
 } from "@/lib/campaigns";
 import { parseContactsFromFile, type CsvContact } from "@/lib/csv";
+import { formatMoney } from "@/lib/twilio-cost";
 import { formatPhoneDisplay } from "@/lib/phone";
 
 const inputClass =
@@ -230,6 +232,9 @@ export default function Campaigns() {
   const [formError, setFormError] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
   const [skipAlreadySent, setSkipAlreadySent] = useState(true);
+  const [campaignCost, setCampaignCost] = useState<CampaignCostSummary | null>(null);
+  const [costLoading, setCostLoading] = useState(false);
+  const [costSyncing, setCostSyncing] = useState(false);
   const activityFilterRef = useRef<ActivityFilter>("all");
 
   const loadDelivery = useCallback(
@@ -355,6 +360,32 @@ export default function Campaigns() {
     [applyUpdate]
   );
 
+  const loadCampaignCost = useCallback(async (id: string, sync = false) => {
+    if (sync) setCostSyncing(true);
+    else setCostLoading(true);
+    try {
+      if (sync) {
+        await fetch(`/api/campaigns/${id}/cost`, { method: "POST" });
+      }
+      const res = await fetch(`/api/campaigns/${id}/cost`);
+      const data = await res.json();
+      if (res.ok && data.cost) setCampaignCost(data.cost);
+    } catch {
+      // Cost is optional metadata on the detail view.
+    } finally {
+      setCostLoading(false);
+      setCostSyncing(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (view !== "detail" || !routeDetailId) {
+      setCampaignCost(null);
+      return;
+    }
+    void loadCampaignCost(routeDetailId);
+  }, [view, routeDetailId, loadCampaignCost]);
+
   useEffect(() => {
     if (view !== "detail" || !campaign || runningId === campaign.id) return;
     if (campaign.status !== "sending") return;
@@ -427,6 +458,9 @@ export default function Campaigns() {
 
           if (data?.campaign) {
             applyUpdate(data.campaign, data.processed ?? []);
+            if (detailIdRef.current === id && (data.processed?.length ?? 0) > 0) {
+              void loadCampaignCost(id);
+            }
           }
 
           if (pauseRef.current) {
@@ -502,7 +536,7 @@ export default function Campaigns() {
         }
       }
     },
-    [applyUpdate, refreshDetail]
+    [applyUpdate, loadCampaignCost, refreshDetail]
   );
 
   const goToCampaign = useCallback(
@@ -769,7 +803,7 @@ export default function Campaigns() {
     (campaign.status === "sending" || runningId === campaign.id);
 
   return (
-    <div className="mx-auto max-w-4xl space-y-4 sm:space-y-6">
+    <div className="space-y-4 sm:space-y-6">
       <CampaignPageHeader
         view={view}
         listTotal={view === "list" ? listTotal : undefined}
@@ -828,8 +862,8 @@ export default function Campaigns() {
 
           {!listLoading && listTotal === 0 && !listError && (
             <section className="overflow-hidden rounded-2xl border border-border bg-surface shadow-sm">
-              <div className="px-6 py-16 text-center">
-                <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-brand-light text-brand">
+              <div className="px-6 py-16 text-left">
+                <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-brand-light text-brand">
                   <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path
                       strokeLinecap="round"
@@ -840,7 +874,7 @@ export default function Campaigns() {
                   </svg>
                 </div>
                 <h2 className="text-base font-semibold text-foreground">No campaigns yet</h2>
-                <p className="mx-auto mt-1 max-w-sm text-sm text-zinc-500">
+                <p className="mt-1 max-w-md text-sm text-zinc-500">
                   Create your first campaign to message a contact list and track delivery.
                 </p>
                 <button
@@ -1158,6 +1192,10 @@ export default function Campaigns() {
           {campaign && (
             <CampaignDetail
               campaign={campaign}
+              cost={campaignCost}
+              costLoading={costLoading}
+              costSyncing={costSyncing}
+              onRefreshCost={() => void loadCampaignCost(campaign.id, true)}
               deliveryItems={deliveryItems}
               deliveryPage={deliveryPage}
               deliveryTotalPages={deliveryTotalPages}
@@ -1219,6 +1257,10 @@ function Count({
 
 function CampaignDetail({
   campaign,
+  cost,
+  costLoading,
+  costSyncing,
+  onRefreshCost,
   deliveryItems,
   deliveryPage,
   deliveryTotalPages,
@@ -1239,6 +1281,10 @@ function CampaignDetail({
   onSkipAlreadySentChange,
 }: {
   campaign: CampaignSummary;
+  cost: CampaignCostSummary | null;
+  costLoading: boolean;
+  costSyncing: boolean;
+  onRefreshCost: () => void;
   deliveryItems: RecipientView[];
   deliveryPage: number;
   deliveryTotalPages: number;
@@ -1262,10 +1308,54 @@ function CampaignDetail({
   const resumable = canResumeCampaign(campaign, skipAlreadySent) && !sending;
   const latest = deliveryItems[0];
 
+  const displayCost =
+    cost && cost.estimatedCostUsd != null && cost.unpricedSentCount > 0
+      ? cost.estimatedCostUsd
+      : cost?.totalCostUsd ?? 0;
+  const costIsEstimate =
+    Boolean(cost && cost.unpricedSentCount > 0 && cost.pricedSentCount > 0);
+
   return (
     <div className="space-y-4">
       <section className="rounded-2xl border border-border bg-surface p-4 shadow-sm sm:p-6">
-        <p className="text-xs text-zinc-400">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <p className="text-xs font-medium uppercase tracking-wide text-zinc-400">
+              Campaign cost
+            </p>
+            {costLoading && !cost ? (
+              <div className="mt-2 h-8 w-24 animate-pulse rounded-lg bg-brand-muted" />
+            ) : (
+              <p className="mt-1 text-2xl font-semibold tabular-nums text-foreground">
+                {cost && (cost.totalCostUsd > 0 || cost.sentCount > 0)
+                  ? formatMoney(displayCost, cost.currency)
+                  : "—"}
+                {costIsEstimate && (
+                  <span className="ml-2 text-xs font-normal text-zinc-500">est.</span>
+                )}
+              </p>
+            )}
+            {cost && (
+              <p className="mt-1 text-xs text-zinc-500">
+                {cost.pricedSentCount} priced
+                {cost.unpricedSentCount > 0
+                  ? ` · ${cost.unpricedSentCount} pending Twilio price`
+                  : ""}
+                {cost.totalSegments > 0 ? ` · ${cost.totalSegments} segments` : ""}
+              </p>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={onRefreshCost}
+            disabled={costSyncing}
+            className="rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-zinc-600 hover:bg-brand-light disabled:opacity-50"
+          >
+            {costSyncing ? "Syncing…" : "Refresh from Twilio"}
+          </button>
+        </div>
+
+        <p className="mt-4 text-xs text-zinc-400">
           {formatWhen(campaign.createdAt)}
           {campaign.createdByName ? ` · ${campaign.createdByName}` : ""}
           {campaign.sourceFileName ? ` · ${campaign.sourceFileName}` : ""}
@@ -1454,13 +1544,20 @@ function CampaignDetail({
                     )}
                     <p className="font-mono text-foreground">{formatPhoneDisplay(item.phone)}</p>
                   </div>
-                  <span
-                    className={`shrink-0 text-xs font-medium ${
-                      item.status === "failed" ? "text-red-600" : "text-emerald-700"
-                    }`}
-                  >
-                    {item.status === "failed" ? "Failed" : "Sent"}
-                  </span>
+                  <div className="shrink-0 text-right">
+                    <span
+                      className={`text-xs font-medium ${
+                        item.status === "failed" ? "text-red-600" : "text-emerald-700"
+                      }`}
+                    >
+                      {item.status === "failed" ? "Failed" : "Sent"}
+                    </span>
+                    {item.priceUsd != null && item.priceUsd > 0 && (
+                      <p className="text-[10px] tabular-nums text-zinc-500">
+                        {formatMoney(item.priceUsd, "USD")}
+                      </p>
+                    )}
+                  </div>
                 </div>
                 {item.error && <p className="mt-1 text-xs text-red-600">{item.error}</p>}
               </div>

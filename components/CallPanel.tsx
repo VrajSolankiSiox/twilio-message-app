@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import LiveCallBar from "@/components/LiveCallBar";
 import { useVoiceCall } from "@/components/VoiceCallProvider";
+import { APP_INPUT, APP_LABEL, APP_SECTION } from "@/lib/app-layout";
 import { formatPhoneDisplay, normalizePhone } from "@/lib/phone";
 
 interface CallRecord {
@@ -20,9 +21,6 @@ interface CallPanelProps {
   prefillPhone?: string | null;
   currentUser: { id: string; fullName: string } | null;
 }
-
-const inputClass =
-  "w-full rounded-xl border border-border bg-white px-4 py-2.5 text-sm text-foreground placeholder:text-zinc-400 focus:border-brand focus:ring-2 focus:ring-brand/20";
 
 function statusColor(status: string): string {
   switch (status) {
@@ -98,7 +96,7 @@ export default function CallPanel({ prefillPhone, currentUser }: CallPanelProps)
     <div className="flex h-full min-h-0 flex-col gap-3 overflow-hidden sm:gap-4">
       <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden lg:flex-row lg:gap-4">
         <div className="flex w-full shrink-0 flex-col gap-4 overflow-y-auto lg:w-[420px] lg:pr-1">
-          <section className="rounded-2xl border border-border bg-surface p-4 shadow-sm sm:p-5">
+          <section className={APP_SECTION}>
             <h2 className="mb-1 text-sm font-semibold uppercase tracking-wide text-brand">
               Live Call
             </h2>
@@ -108,16 +106,14 @@ export default function CallPanel({ prefillPhone, currentUser }: CallPanelProps)
 
             <div className="space-y-3">
               <div>
-                <label className="mb-1.5 block text-sm font-medium text-zinc-700">
-                  Phone number
-                </label>
+                <label className={APP_LABEL}>Phone number</label>
                 <input
                   type="tel"
                   value={phone}
                   onChange={(e) => setPhone(e.target.value)}
                   placeholder="+1 (470) 627-5656"
                   disabled={voice.isInCall}
-                  className={inputClass}
+                  className={APP_INPUT}
                 />
               </div>
 
@@ -156,8 +152,10 @@ export default function CallPanel({ prefillPhone, currentUser }: CallPanelProps)
 
         <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border border-border bg-surface shadow-sm">
           <div className="shrink-0 border-b border-border px-4 py-3 sm:px-5 sm:py-4">
-            <h2 className="text-sm font-semibold text-foreground">Call History</h2>
-            <p className="text-xs text-zinc-400">Recent live outbound calls</p>
+            <h2 className="text-sm font-semibold uppercase tracking-wide text-brand">
+              Call History
+            </h2>
+            <p className="mt-1 text-xs text-zinc-500">Recent live outbound calls</p>
           </div>
 
           <div className="min-h-0 flex-1 overflow-y-auto">
@@ -168,7 +166,7 @@ export default function CallPanel({ prefillPhone, currentUser }: CallPanelProps)
             )}
 
             {!loadingHistory && calls.length === 0 && (
-              <p className="py-16 text-center text-sm text-zinc-400">
+              <p className="px-4 py-16 text-left text-sm text-zinc-400 sm:px-5">
                 No calls placed yet
               </p>
             )}

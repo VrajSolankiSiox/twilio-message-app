@@ -1,10 +1,18 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useCallback, useLayoutEffect, useRef, useState } from "react";
 import Logo from "@/components/Logo";
 import { NAV_ITEMS } from "@/lib/nav-items";
+import { tabToPath } from "@/lib/navigation";
 
-export type NavTab = "messages" | "calls" | "campaign" | "team" | "invoices";
+export type NavTab =
+  | "messages"
+  | "calls"
+  | "campaign"
+  | "cost"
+  | "team"
+  | "invoices";
 
 interface SidebarProps {
   activeTab: NavTab;
@@ -29,6 +37,7 @@ export default function Sidebar({
   isAdmin,
   onLogout,
 }: SidebarProps) {
+  const router = useRouter();
   const navRef = useRef<HTMLElement>(null);
   const itemRefs = useRef<Partial<Record<NavTab, HTMLButtonElement>>>({});
   const prevTabRef = useRef<NavTab | null>(null);
@@ -248,14 +257,14 @@ export default function Sidebar({
         : null;
 
   return (
-    <aside className="hidden w-64 shrink-0 flex-col border-r border-border bg-surface lg:flex">
+    <aside className="hidden h-full min-h-0 w-64 shrink-0 flex-col border-r border-border bg-surface lg:flex">
       <div className="border-b border-border px-5 py-5">
         <Logo size="sm" showText layout="stacked" />
       </div>
 
       <nav
         ref={navRef}
-        className="relative flex-1 space-y-1 px-3 py-4 touch-none"
+        className="relative min-h-0 flex-1 space-y-1 overflow-x-hidden overflow-y-auto px-3 py-4 touch-none"
         onPointerDown={handleNavPointerDown}
         onPointerMove={handleNavPointerMove}
         onPointerUp={handleNavPointerUp}
@@ -292,12 +301,14 @@ export default function Sidebar({
               ref={(el) => {
                 if (el) itemRefs.current[item.id] = el;
               }}
+              onMouseEnter={() => router.prefetch(tabToPath(item.id))}
+              onFocus={() => router.prefetch(tabToPath(item.id))}
               onClick={() => {
                 if (!isDraggingRef.current) onTabChange(item.id);
               }}
-              className={`relative z-10 flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium ${
+              className={`relative z-10 flex w-full cursor-pointer items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium ${
                 highlighted ? "text-white nav-item-active" : "text-zinc-600"
-              } ${highlighted && !isDragging ? "cursor-grab active:cursor-grabbing" : ""}`}
+              }`}
             >
               <span
                 className={`relative z-10 ${
@@ -336,7 +347,7 @@ export default function Sidebar({
         )}
         <button
           onClick={onLogout}
-          className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-sm font-medium text-zinc-500 transition-colors hover:bg-red-50 hover:text-red-600"
+          className="flex w-full cursor-pointer items-center gap-2 rounded-xl px-3 py-2 text-sm font-medium text-zinc-500 transition-colors hover:bg-red-50 hover:text-red-600"
         >
           <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path

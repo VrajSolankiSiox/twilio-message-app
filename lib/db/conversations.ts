@@ -11,6 +11,8 @@ export interface ConversationAssignment {
   closedAt: Date | null;
   closedByUserId: string | null;
   closedByName: string | null;
+  hasStopInbound?: boolean;
+  hasNonStopInbound?: boolean;
   updatedAt: Date;
 }
 

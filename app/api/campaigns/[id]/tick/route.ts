@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import twilio from "twilio";
 import { requireAdmin } from "@/lib/auth";
+import { getTwilioClient, twilioConfigured } from "@/lib/twilio-client";
+import { pricingFromTwilioMessage } from "@/lib/twilio-cost";
 import { CAMPAIGN_BATCH_SIZE, classifySendError, cleanErrorMessage, type RecipientView, type TickStopReason } from "@/lib/campaigns";
 import { upsertContactNames } from "@/lib/db/conversations";
 import {
@@ -64,11 +65,9 @@ export async function POST(
     });
   }
 
-  const accountSid = process.env.TWILIO_ACCOUNT_SID;
-  const authToken = process.env.TWILIO_AUTH_TOKEN;
   const fromNumber = process.env.TWILIO_FROM_NUMBER;
 
-  if (!accountSid || !authToken || !fromNumber) {
+  if (!twilioConfigured() || !fromNumber) {
     const campaign = await finishSendTick(
       id,
       claim.lockToken,
@@ -81,7 +80,7 @@ export async function POST(
     });
   }
 
-  const client = twilio(accountSid, authToken);
+  const client = getTwilioClient();
   const processed: RecipientView[] = [];
   const namesToSave: Array<{ phone: string; name: string }> = [];
   let systemError: string | null = null;
@@ -109,7 +108,11 @@ export async function POST(
           status: msg.status,
           dateCreated: msg.dateCreated ?? new Date(),
         });
-        await markRecipientSent(recipient._id, msg.sid);
+        await markRecipientSent(
+          recipient._id,
+          msg.sid,
+          pricingFromTwilioMessage(msg)
+        );
 
         if (recipient.name) {
           namesToSave.push({ phone: recipient.phone, name: recipient.name });

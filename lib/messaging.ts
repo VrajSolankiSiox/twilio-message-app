@@ -1,0 +1,2 @@
+export const CONVERSATION_LIST_PAGE_SIZE = 25;
+export const MESSAGE_THREAD_PAGE_SIZE = 40;

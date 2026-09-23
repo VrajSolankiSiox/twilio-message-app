@@ -14,12 +14,14 @@ export function isClosedConversation(conversation: Conversation): boolean {
 }
 
 export function hasStopReply(conversation: Conversation): boolean {
+  if (conversation.isStop) return true;
   return conversation.messages.some(
     (msg) => msg.direction === "inbound" && isStopMessage(msg.body)
   );
 }
 
 export function hasNonStopInboundReply(conversation: Conversation): boolean {
+  if (conversation.hasNonStopInbound) return true;
   return conversation.messages.some((msg) => {
     if (msg.direction !== "inbound") return false;
     const body = msg.body.trim();
@@ -40,6 +42,7 @@ export function highlightStopWithOtherReply(
 }
 
 export function isBlankChat(conversation: Conversation): boolean {
+  if (conversation.isBlank) return true;
   const hasInbound = conversation.messages.some(
     (msg) => msg.direction === "inbound"
   );

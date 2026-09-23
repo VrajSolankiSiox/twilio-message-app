@@ -17,6 +17,7 @@ export const TAB_ORDER: NavTab[] = [
   "messages",
   "calls",
   "campaign",
+  "cost",
   "team",
   "invoices",
 ];
@@ -25,11 +26,12 @@ export const TAB_ROUTES: Record<NavTab, string> = {
   messages: "/messages",
   calls: "/calls",
   campaign: "/campaign",
+  cost: "/cost",
   team: "/team",
   invoices: "/invoices",
 };
 
-const ADMIN_TABS = new Set<NavTab>(["campaign", "invoices"]);
+const ADMIN_TABS = new Set<NavTab>(["campaign", "cost", "invoices"]);
 
 /** @deprecated Old nav id from earlier builds — maps to campaign */
 export type LegacyNavTab = "bulk";
@@ -49,6 +51,10 @@ export function pathnameToTab(pathname: string): NavTab | null {
   }
   const entry = Object.entries(TAB_ROUTES).find(([, path]) => path === canonicalPath);
   return entry ? (entry[0] as NavTab) : null;
+}
+
+export function resolveTabFromPathname(pathname: string): NavTab {
+  return pathnameToTab(pathname) ?? (isCampaignAppPath(pathname) ? "campaign" : "messages");
 }
 
 export function isAdminTab(tab: NavTab | LegacyNavTab): boolean {

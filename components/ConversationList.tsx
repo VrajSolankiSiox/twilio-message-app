@@ -19,8 +19,11 @@ interface ConversationListProps {
   conversations: Conversation[];
   selectedPhone: string | null;
   loading: boolean;
+  loadingMore?: boolean;
+  hasMore?: boolean;
   showStopFilter: boolean;
   onSelect: (phone: string) => void;
+  onLoadMore?: () => void;
   formatTime: (dateStr: string) => string;
 }
 
@@ -28,8 +31,11 @@ export default function ConversationList({
   conversations,
   selectedPhone,
   loading,
+  loadingMore = false,
+  hasMore = false,
   showStopFilter,
   onSelect,
+  onLoadMore,
   formatTime,
 }: ConversationListProps) {
   const listRef = useRef<HTMLDivElement>(null);
@@ -125,6 +131,10 @@ export default function ConversationList({
     const handleResize = () => updateIndicator();
     const handleScroll = () => {
       if (!isLifted) updateIndicator();
+      if (!onLoadMore || !hasMore || loadingMore) return;
+      const distanceFromBottom =
+        list.scrollHeight - list.scrollTop - list.clientHeight;
+      if (distanceFromBottom < 120) onLoadMore();
     };
 
     const observer = new ResizeObserver(handleResize);
@@ -137,7 +147,7 @@ export default function ConversationList({
       list.removeEventListener("scroll", handleScroll);
       window.removeEventListener("resize", handleResize);
     };
-  }, [updateIndicator, isLifted]);
+  }, [updateIndicator, isLifted, onLoadMore, hasMore, loadingMore]);
 
   const highlightedPhone = indicatorReady ? normalizedSelected : null;
 
@@ -269,6 +279,12 @@ export default function ConversationList({
           </button>
         );
       })}
+
+      {loadingMore && (
+        <div className="flex items-center justify-center py-4">
+          <div className="h-5 w-5 animate-spin rounded-full border-2 border-brand border-t-transparent" />
+        </div>
+      )}
     </div>
   );
 }

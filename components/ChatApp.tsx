@@ -9,6 +9,10 @@ import { highlightStopWithOtherReply } from "@/lib/filters";
 import { isStopMessage } from "@/lib/stop";
 import type { ChatMessage, Conversation } from "@/lib/messages";
 import { conversationLabel } from "@/lib/messages";
+import {
+  CONVERSATION_LIST_PAGE_SIZE,
+  MESSAGE_THREAD_PAGE_SIZE,
+} from "@/lib/messaging";
 import { formatPhoneDisplay, normalizePhone } from "@/lib/phone";
 
 interface CurrentUser {
@@ -69,6 +73,32 @@ function conversationInitials(conv: Conversation): string {
   const digits = single.replace(/\D/g, "");
   if (digits.length >= 2) return digits.slice(-2);
   return single.slice(0, 2).toUpperCase();
+}
+
+function mergeConversationList(
+  prev: Conversation[],
+  incoming: Conversation[]
+): Conversation[] {
+  const map = new Map(prev.map((c) => [normalizePhone(c.phone), c]));
+  for (const conv of incoming) {
+    const key = normalizePhone(conv.phone);
+    const existing = map.get(key);
+    if (existing) {
+      map.set(key, {
+        ...existing,
+        ...conv,
+        messages: existing.messages,
+        hasOlderMessages: existing.hasOlderMessages,
+        messageCount: existing.messageCount ?? conv.messageCount,
+      });
+    } else {
+      map.set(key, conv);
+    }
+  }
+  return Array.from(map.values()).sort(
+    (a, b) =>
+      new Date(b.lastMessageAt).getTime() - new Date(a.lastMessageAt).getTime()
+  );
 }
 
 function addMessageToConversations(
@@ -149,10 +179,16 @@ export default function ChatApp() {
   const [closing, setClosing] = useState(false);
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
   const [assigning, setAssigning] = useState(false);
+  const [listPage, setListPage] = useState(1);
+  const [hasMoreConversations, setHasMoreConversations] = useState(false);
+  const [conversationTotal, setConversationTotal] = useState(0);
+  const [loadingMoreList, setLoadingMoreList] = useState(false);
+  const [loadingThread, setLoadingThread] = useState(false);
 
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const shouldAutoScrollRef = useRef(true);
   const prevMessageCountRef = useRef(0);
+  const loadingOlderRef = useRef(false);
 
   useEffect(() => {
     voice.initialize();
@@ -201,56 +237,199 @@ export default function ChatApp() {
     });
   }, []);
 
+  const loadThread = useCallback(
+    async (
+      phone: string,
+      options?: {
+        before?: string;
+        prepend?: boolean;
+        appendNew?: boolean;
+        preserveScrollHeight?: number;
+        silent?: boolean;
+      }
+    ) => {
+      if (!options?.silent) setLoadingThread(true);
+      try {
+        const params = new URLSearchParams({
+          phone: normalizePhone(phone),
+          limit: String(MESSAGE_THREAD_PAGE_SIZE),
+        });
+        if (options?.before) params.set("before", options.before);
+
+        const res = await fetch(`/api/twilio/messages/thread?${params}`, {
+          cache: "no-store",
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          setError(data.error || "Failed to load messages.");
+          return;
+        }
+
+        setError(null);
+        const normalized = normalizePhone(phone);
+        setConversations((prev) =>
+          prev.map((c) => {
+            if (normalizePhone(c.phone) !== normalized) return c;
+            const existingIds = new Set(c.messages.map((m) => m.sid));
+            const incoming = (data.messages as ChatMessage[]).filter(
+              (m) => !existingIds.has(m.sid)
+            );
+            let messages: ChatMessage[];
+            if (options?.prepend) {
+              messages = [...incoming, ...c.messages];
+            } else if (options?.appendNew) {
+              messages = [...c.messages, ...incoming];
+            } else {
+              messages = data.messages as ChatMessage[];
+            }
+            const hasNonStopInbound =
+              c.hasNonStopInbound ||
+              messages.some((msg) => {
+                if (msg.direction !== "inbound") return false;
+                const body = msg.body.trim();
+                if (body && !isStopMessage(body)) return true;
+                const mediaCount = Number(msg.numMedia ?? "0");
+                return Number.isFinite(mediaCount) && mediaCount > 0;
+              });
+
+            return {
+              ...c,
+              messages,
+              messageCount: data.totalCount,
+              hasOlderMessages: data.hasMore,
+              hasNonStopInbound,
+            };
+          })
+        );
+
+        if (options?.preserveScrollHeight != null) {
+          const el = messagesContainerRef.current;
+          if (el) {
+            requestAnimationFrame(() => {
+              el.scrollTop = el.scrollHeight - options.preserveScrollHeight!;
+            });
+          }
+        }
+      } catch {
+        setError("Network error while loading messages.");
+      } finally {
+        if (!options?.silent) setLoadingThread(false);
+      }
+    },
+    []
+  );
+
   const handleMessagesScroll = () => {
     const el = messagesContainerRef.current;
     if (!el) return;
     const distanceFromBottom =
       el.scrollHeight - el.scrollTop - el.clientHeight;
     shouldAutoScrollRef.current = distanceFromBottom < 100;
+
+    if (
+      el.scrollTop < 80 &&
+      selectedPhone &&
+      selectedConversation?.hasOlderMessages &&
+      !loadingOlderRef.current &&
+      !loadingThread
+    ) {
+      const oldest = selectedConversation.messages[0];
+      if (oldest) {
+        loadingOlderRef.current = true;
+        const prevHeight = el.scrollHeight;
+        void loadThread(selectedPhone, {
+          before: oldest.dateCreated,
+          prepend: true,
+          preserveScrollHeight: prevHeight,
+        }).finally(() => {
+          loadingOlderRef.current = false;
+        });
+      }
+    }
   };
 
-  const fetchConversations = useCallback(async () => {
-    try {
-      const params = new URLSearchParams();
-      if (showClosed) params.set("showClosed", "true");
-      else {
-        if (showStop) params.set("showStop", "true");
-        if (showBlank) params.set("showBlank", "true");
-      }
+  const fetchConversations = useCallback(
+    async (options?: { page?: number; append?: boolean; silent?: boolean }) => {
+      const page = options?.page ?? 1;
+      const append = options?.append ?? false;
+      const silent = options?.silent ?? false;
 
-      const res = await fetch(`/api/twilio/messages?${params}`, {
-        cache: "no-store",
-      });
-      const data = await res.json();
+      try {
+        if (append) setLoadingMoreList(true);
+        else if (!silent) setLoading(true);
 
-      if (!res.ok) {
-        setError(data.error || "Failed to load messages.");
-        return;
-      }
-
-      setError(null);
-      setConversations(data.conversations);
-      if (data.user) setCurrentUser(data.user);
-
-      setSelectedPhone((prev) => {
-        if (
-          prev &&
-          data.conversations.some(
-            (c: Conversation) => normalizePhone(c.phone) === normalizePhone(prev)
-          )
-        ) {
-          return prev;
+        const params = new URLSearchParams({
+          page: String(page),
+          limit: String(CONVERSATION_LIST_PAGE_SIZE),
+        });
+        if (showClosed) params.set("showClosed", "true");
+        else {
+          if (showStop) params.set("showStop", "true");
+          if (showBlank) params.set("showBlank", "true");
         }
-        const isMobileView = window.matchMedia("(max-width: 1023px)").matches;
-        if (isMobileView) return null;
-        return data.conversations[0]?.phone ?? null;
-      });
-    } catch {
-      setError("Network error while loading messages.");
-    } finally {
-      setLoading(false);
-    }
-  }, [showClosed, showStop, showBlank]);
+
+        const res = await fetch(`/api/twilio/messages?${params}`, {
+          cache: "no-store",
+        });
+        const data = await res.json();
+
+        if (!res.ok) {
+          setError(data.error || "Failed to load messages.");
+          return;
+        }
+
+        setError(null);
+        setHasMoreConversations(Boolean(data.hasMore));
+        setConversationTotal(data.total ?? data.conversations.length);
+        setListPage(page);
+
+        if (append) {
+          setConversations((prev) => {
+            const seen = new Set(prev.map((c) => normalizePhone(c.phone)));
+            const next = [...prev];
+            for (const conv of data.conversations as Conversation[]) {
+              const key = normalizePhone(conv.phone);
+              if (!seen.has(key)) {
+                seen.add(key);
+                next.push(conv);
+              }
+            }
+            return next;
+          });
+        } else if (silent) {
+          setConversations((prev) =>
+            mergeConversationList(prev, data.conversations as Conversation[])
+          );
+        } else {
+          setConversations(data.conversations);
+        }
+
+        if (data.user) setCurrentUser(data.user);
+
+        if (!append && !silent) {
+          setSelectedPhone((prev) => {
+            if (
+              prev &&
+              (data.conversations as Conversation[]).some(
+                (c) => normalizePhone(c.phone) === normalizePhone(prev)
+              )
+            ) {
+              return prev;
+            }
+            const isMobileView = window.matchMedia("(max-width: 1023px)").matches;
+            if (isMobileView) return null;
+            return data.conversations[0]?.phone ?? null;
+          });
+        }
+      } catch {
+        setError("Network error while loading messages.");
+      } finally {
+        setLoading(false);
+        setLoadingMoreList(false);
+      }
+    },
+    [showClosed, showStop, showBlank]
+  );
 
   const syncAfterSend = useCallback(async () => {
     const delays = [1000, 2500, 5000];
@@ -261,10 +440,29 @@ export default function ChatApp() {
   }, [fetchConversations]);
 
   useEffect(() => {
-    fetchConversations();
-    const interval = setInterval(fetchConversations, 5000);
-    return () => clearInterval(interval);
+    setListPage(1);
+    void fetchConversations({ page: 1 });
   }, [fetchConversations]);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      void fetchConversations({ page: 1, silent: true });
+      if (selectedPhone) {
+        void loadThread(selectedPhone, { appendNew: true, silent: true });
+      }
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [fetchConversations, loadThread, selectedPhone]);
+
+  useEffect(() => {
+    if (!selectedPhone) return;
+    const conv = conversations.find(
+      (c) => normalizePhone(c.phone) === normalizePhone(selectedPhone)
+    );
+    if (conv && conv.messages.length === 0) {
+      void loadThread(selectedPhone);
+    }
+  }, [selectedPhone, conversations, loadThread]);
 
   useEffect(() => {
     if (!isMobile && conversations.length > 0 && !selectedPhone) {
@@ -534,9 +732,15 @@ export default function ChatApp() {
               {showClosed ? "Closed" : "Inbox"}
             </h2>
             <p className="text-xs text-zinc-400">
-              {conversations.length}{" "}
+              {conversationTotal > 0 ? conversationTotal : conversations.length}{" "}
               {showClosed ? "closed" : ""} conversation
-              {conversations.length === 1 ? "" : "s"}
+              {(conversationTotal > 0 ? conversationTotal : conversations.length) ===
+              1
+                ? ""
+                : "s"}
+              {hasMoreConversations && conversations.length < conversationTotal
+                ? ` · showing ${conversations.length}`
+                : ""}
             </p>
           </div>
 
@@ -544,8 +748,14 @@ export default function ChatApp() {
             conversations={conversations}
             selectedPhone={selectedPhone}
             loading={loading}
+            loadingMore={loadingMoreList}
+            hasMore={hasMoreConversations}
             showStopFilter={showStop && !showClosed}
             onSelect={handleSelectConversation}
+            onLoadMore={() => {
+              if (!hasMoreConversations || loadingMoreList) return;
+              void fetchConversations({ page: listPage + 1, append: true });
+            }}
             formatTime={formatTime}
           />
         </div>
@@ -617,7 +827,9 @@ export default function ChatApp() {
                     >
                       {formatPhoneDisplay(selectedConversation.phone)}
                       <span className="text-zinc-300"> · </span>
-                      {selectedConversation.messages.length} msg
+                      {selectedConversation.messageCount ??
+                        selectedConversation.messages.length}{" "}
+                      msg
                       {currentUser?.role !== "admin" && (
                         <>
                           <span className="text-zinc-300"> · </span>
@@ -733,6 +945,22 @@ export default function ChatApp() {
                 className="min-h-0 flex-1 overflow-y-auto bg-[#f9f8fd] px-4 py-4 sm:px-6 sm:py-5"
               >
                 <div className="w-full space-y-1">
+                  {loadingThread && selectedConversation.messages.length === 0 && (
+                    <div className="flex justify-center py-12">
+                      <div className="h-6 w-6 animate-spin rounded-full border-2 border-brand border-t-transparent" />
+                    </div>
+                  )}
+                  {selectedConversation.hasOlderMessages && (
+                    <div className="flex justify-center py-2">
+                      {loadingThread ? (
+                        <div className="h-4 w-4 animate-spin rounded-full border-2 border-brand border-t-transparent" />
+                      ) : (
+                        <span className="text-[11px] text-zinc-400">
+                          Scroll up for older messages
+                        </span>
+                      )}
+                    </div>
+                  )}
                   {selectedConversation.messages.map((msg, idx) => {
                     const isOutbound = msg.direction === "outbound";
                     const dateLabel = formatDateDivider(msg.dateCreated);

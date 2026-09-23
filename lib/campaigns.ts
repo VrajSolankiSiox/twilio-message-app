@@ -41,6 +41,20 @@ export interface RecipientView {
   status: RecipientStatus;
   error: string | null;
   updatedAt: string;
+  priceUsd?: number | null;
+  numSegments?: number | null;
+}
+
+export interface CampaignCostSummary {
+  campaignId: string;
+  currency: string;
+  totalCostUsd: number;
+  pricedSentCount: number;
+  unpricedSentCount: number;
+  totalSegments: number;
+  sentCount: number;
+  failedCount: number;
+  estimatedCostUsd: number | null;
 }
 
 export interface PaginatedResult<T> {

@@ -8,9 +8,12 @@ import {
   type CampaignStatus,
   type CampaignSummary,
   type PaginatedResult,
+  type CampaignCostSummary,
   type RecipientStatus,
   type RecipientView,
 } from "@/lib/campaigns";
+import { getTwilioClient } from "@/lib/twilio-client";
+import { pricingFromTwilioMessage } from "@/lib/twilio-cost";
 import { getDb } from "@/lib/mongodb";
 import { normalizePhone } from "@/lib/phone";
 
@@ -48,9 +51,24 @@ interface CampaignRecipientDocument {
   name: string | null;
   status: RecipientStatus;
   sid: string | null;
+  priceUsd: number | null;
+  numSegments: number | null;
+  priceUnit: string | null;
   error: string | null;
   attempts: number;
   updatedAt: Date;
+}
+
+export interface CampaignCostRow {
+  campaignId: string;
+  name: string;
+  status: CampaignStatus;
+  sent: number;
+  failed: number;
+  totalCostUsd: number;
+  totalSegments: number;
+  pricedSentCount: number;
+  createdAt: string;
 }
 
 export interface PreparedContact {
@@ -126,6 +144,8 @@ function serializeRecipient(recipient: CampaignRecipientDocument): RecipientView
     status: recipient.status,
     error: recipient.error,
     updatedAt: recipient.updatedAt.toISOString(),
+    priceUsd: recipient.priceUsd ?? null,
+    numSegments: recipient.numSegments ?? null,
   };
 }
 
@@ -360,6 +380,9 @@ export async function createCampaign(input: {
     name: contact.name,
     status: "pending",
     sid: null,
+    priceUsd: null,
+    numSegments: null,
+    priceUnit: null,
     error: null,
     attempts: 0,
     updatedAt: now,
@@ -423,6 +446,9 @@ export async function requeueSentRecipientsForFollowUp(
       $set: {
         status: "pending",
         sid: null,
+        priceUsd: null,
+        numSegments: null,
+        priceUnit: null,
         error: null,
         updatedAt: now,
       },
@@ -534,7 +560,12 @@ export async function nextPendingRecipients(
 
 export async function markRecipientSent(
   recipientId: ObjectId,
-  sid: string
+  sid: string,
+  pricing?: {
+    priceUsd: number | null;
+    numSegments: number | null;
+    priceUnit: string | null;
+  }
 ): Promise<void> {
   const col = await recipients();
   await col.updateOne(
@@ -545,10 +576,194 @@ export async function markRecipientSent(
         sid,
         error: null,
         updatedAt: new Date(),
+        ...(pricing
+          ? {
+              priceUsd: pricing.priceUsd,
+              numSegments: pricing.numSegments,
+              priceUnit: pricing.priceUnit,
+            }
+          : {}),
       },
       $inc: { attempts: 1 },
     }
   );
+}
+
+export async function getCampaignCostSummary(
+  campaignId: string
+): Promise<CampaignCostSummary | null> {
+  const _id = parseId(campaignId);
+  if (!_id) return null;
+  await ensureIndexes();
+  const campaignCol = await campaigns();
+  const campaign = await campaignCol.findOne({ _id });
+  if (!campaign) return null;
+
+  const recipientCol = await recipients();
+  const sentRows = await recipientCol
+    .find({ campaignId: _id, status: "sent" })
+    .project({ priceUsd: 1, numSegments: 1 })
+    .toArray();
+
+  let totalCostUsd = 0;
+  let pricedSentCount = 0;
+  let totalSegments = 0;
+  for (const row of sentRows) {
+    if (row.priceUsd != null && row.priceUsd > 0) {
+      totalCostUsd += row.priceUsd;
+      pricedSentCount += 1;
+    }
+    if (row.numSegments != null && row.numSegments > 0) {
+      totalSegments += row.numSegments;
+    }
+  }
+
+  const unpricedSentCount = sentRows.length - pricedSentCount;
+  let estimatedCostUsd: number | null = null;
+  if (sentRows.length > 0 && pricedSentCount === sentRows.length) {
+    estimatedCostUsd = totalCostUsd;
+  } else if (pricedSentCount > 0 && unpricedSentCount > 0) {
+    const avg = totalCostUsd / pricedSentCount;
+    estimatedCostUsd = totalCostUsd + avg * unpricedSentCount;
+  }
+
+  return {
+    campaignId,
+    currency: "USD",
+    totalCostUsd,
+    pricedSentCount,
+    unpricedSentCount,
+    totalSegments,
+    sentCount: campaign.sent,
+    failedCount: campaign.failed,
+    estimatedCostUsd:
+      estimatedCostUsd !== null && Number.isFinite(estimatedCostUsd)
+        ? Math.round(estimatedCostUsd * 10000) / 10000
+        : null,
+  };
+}
+
+export async function syncCampaignMessagePrices(
+  campaignId: string,
+  limit = 50
+): Promise<{ updated: number; remaining: number }> {
+  const _id = parseId(campaignId);
+  if (!_id) return { updated: 0, remaining: 0 };
+
+  const client = getTwilioClient();
+  const col = await recipients();
+  const pending = await col
+    .find({
+      campaignId: _id,
+      status: "sent",
+      sid: { $ne: null },
+      $or: [{ priceUsd: null }, { priceUsd: { $exists: false } }],
+    })
+    .limit(limit)
+    .toArray();
+
+  let updated = 0;
+  for (const recipient of pending) {
+    if (!recipient.sid) continue;
+    try {
+      const msg = await client.messages(recipient.sid).fetch();
+      const pricing = pricingFromTwilioMessage(msg);
+      await col.updateOne(
+        { _id: recipient._id },
+        {
+          $set: {
+            priceUsd: pricing.priceUsd,
+            numSegments: pricing.numSegments,
+            priceUnit: pricing.priceUnit,
+            updatedAt: new Date(),
+          },
+        }
+      );
+      if (pricing.priceUsd != null) updated += 1;
+    } catch {
+      // Message may still be processing; try again later.
+    }
+  }
+
+  const remaining = await col.countDocuments({
+    campaignId: _id,
+    status: "sent",
+    sid: { $ne: null },
+    $or: [{ priceUsd: null }, { priceUsd: { $exists: false } }],
+  });
+
+  return { updated, remaining };
+}
+
+export async function listCampaignCostRows(
+  limit = 50
+): Promise<CampaignCostRow[]> {
+  await ensureIndexes();
+  const recipientCol = await recipients();
+  const campaignCol = await campaigns();
+
+  const grouped = await recipientCol
+    .aggregate<{
+      _id: ObjectId;
+      totalCostUsd: number;
+      totalSegments: number;
+      pricedSentCount: number;
+    }>([
+      { $match: { status: "sent", priceUsd: { $ne: null, $gt: 0 } } },
+      {
+        $group: {
+          _id: "$campaignId",
+          totalCostUsd: { $sum: "$priceUsd" },
+          totalSegments: { $sum: { $ifNull: ["$numSegments", 0] } },
+          pricedSentCount: { $sum: 1 },
+        },
+      },
+      { $sort: { totalCostUsd: -1 } },
+      { $limit: limit },
+    ])
+    .toArray();
+
+  const rows: CampaignCostRow[] = [];
+  for (const group of grouped) {
+    const campaign = await campaignCol.findOne({ _id: group._id });
+    if (!campaign) continue;
+    rows.push({
+      campaignId: group._id.toString(),
+      name: campaign.name,
+      status: campaign.status,
+      sent: campaign.sent,
+      failed: campaign.failed,
+      totalCostUsd: group.totalCostUsd,
+      totalSegments: group.totalSegments,
+      pricedSentCount: group.pricedSentCount,
+      createdAt: campaign.createdAt.toISOString(),
+    });
+  }
+
+  const campaignsWithoutPrice = await campaignCol
+    .find({ sent: { $gt: 0 } })
+    .sort({ updatedAt: -1 })
+    .limit(limit)
+    .toArray();
+
+  const seen = new Set(rows.map((r) => r.campaignId));
+  for (const campaign of campaignsWithoutPrice) {
+    const id = campaign._id.toString();
+    if (seen.has(id)) continue;
+    rows.push({
+      campaignId: id,
+      name: campaign.name,
+      status: campaign.status,
+      sent: campaign.sent,
+      failed: campaign.failed,
+      totalCostUsd: 0,
+      totalSegments: 0,
+      pricedSentCount: 0,
+      createdAt: campaign.createdAt.toISOString(),
+    });
+  }
+
+  return rows.slice(0, limit);
 }
 
 export async function markRecipientFailed(

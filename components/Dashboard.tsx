@@ -1,7 +1,14 @@
 "use client";
 
 import { usePathname, useRouter } from "next/navigation";
-import { Suspense, useEffect, useRef, useState } from "react";
+import {
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  useTransition,
+} from "react";
 import CallPanel from "@/components/CallPanel";
 import ChatApp from "@/components/ChatApp";
 import MobileNav from "@/components/MobileNav";
@@ -9,14 +16,18 @@ import Sidebar, { type NavTab } from "@/components/Sidebar";
 import TabPanel from "@/components/TabPanel";
 import { VoiceCallProvider } from "@/components/VoiceCallProvider";
 import Campaigns from "@/components/Campaigns";
+import CostDashboard from "@/components/CostDashboard";
 import InvoiceGenerator from "@/components/InvoiceGenerator";
+import AppPageFrame from "@/components/AppPageFrame";
+import PageLoadingSkeleton from "@/components/PageLoadingSkeleton";
 import UserManagement from "@/components/UserManagement";
+import { APP_TESTING_BADGE } from "@/lib/app-layout";
 import {
   isAdminTab,
   isCampaignAppPath,
   normalizeAppPathname,
   pathnameToTab,
-  TAB_ORDER,
+  resolveTabFromPathname,
   tabToPath,
 } from "@/lib/navigation";
 
@@ -35,12 +46,30 @@ export default function Dashboard({ initialUser }: DashboardProps) {
   const router = useRouter();
   const pathname = usePathname();
   const user = initialUser;
-  const activeTab =
-    pathnameToTab(pathname) ??
-    (isCampaignAppPath(pathname) ? "campaign" : "messages");
-  const prevTabRef = useRef(activeTab);
-  const [tabDirection, setTabDirection] = useState(0);
+  const routeTab = useMemo(() => resolveTabFromPathname(pathname), [pathname]);
+  const [pendingTab, setPendingTab] = useState<NavTab | null>(null);
+  const [, startTransition] = useTransition();
+  const activeTab = pendingTab ?? routeTab;
+  const [mountedTabs, setMountedTabs] = useState<Set<NavTab>>(
+    () => new Set([routeTab])
+  );
   const [callPrefillPhone, setCallPrefillPhone] = useState<string | null>(null);
+
+  const markTabMounted = useCallback((tab: NavTab) => {
+    setMountedTabs((prev) => {
+      if (prev.has(tab)) return prev;
+      const next = new Set(prev);
+      next.add(tab);
+      return next;
+    });
+  }, []);
+
+  useEffect(() => {
+    markTabMounted(routeTab);
+    if (pendingTab === routeTab) {
+      setPendingTab(null);
+    }
+  }, [routeTab, pendingTab, markTabMounted]);
 
   const handleLogout = async () => {
     await fetch("/api/auth/logout", { method: "POST" });
@@ -54,6 +83,7 @@ export default function Dashboard({ initialUser }: DashboardProps) {
     messages: "Messages",
     calls: "Live Calls",
     campaign: "Campaigns",
+    cost: "Cost & Usage",
     team: isAdmin ? "Team Management" : "Teams",
     invoices: "Invoice Generator",
   };
@@ -73,23 +103,22 @@ export default function Dashboard({ initialUser }: DashboardProps) {
     } else if (pathnameToTab(pathname) === null) {
       router.replace("/messages");
       return;
-    } else if (!isAdmin && isAdminTab(activeTab)) {
+    } else if (!isAdmin && isAdminTab(routeTab)) {
       router.replace("/messages");
       return;
     }
-
-    const prevIndex = TAB_ORDER.indexOf(prevTabRef.current);
-    const nextIndex = TAB_ORDER.indexOf(activeTab);
-    if (prevTabRef.current !== activeTab) {
-      setTabDirection(nextIndex >= prevIndex ? 1 : -1);
-      prevTabRef.current = activeTab;
-    }
-  }, [activeTab, isAdmin, pathname, router]);
+  }, [isAdmin, pathname, router, routeTab]);
 
   const handleTabChange = (tab: NavTab) => {
     if (tab === activeTab) return;
-    router.push(tabToPath(tab));
+    markTabMounted(tab);
+    setPendingTab(tab);
+    startTransition(() => {
+      router.push(tabToPath(tab));
+    });
   };
+
+  const isTabMounted = (tab: NavTab) => mountedTabs.has(tab);
 
   return (
     <VoiceCallProvider>
@@ -104,12 +133,16 @@ export default function Dashboard({ initialUser }: DashboardProps) {
 
         <div className="flex min-w-0 flex-1 flex-col overflow-hidden pb-[calc(3.5rem+env(safe-area-inset-bottom))] lg:pb-0">
           <header className="flex shrink-0 items-center justify-between gap-3 border-b border-border bg-surface px-4 py-3 sm:px-6 sm:py-4">
-            <h1
-              key={activeTab}
-              className="header-title-enter truncate text-base font-semibold text-foreground sm:text-lg"
-            >
-              {pageTitles[activeTab]}
-            </h1>
+            <div className="flex min-w-0 flex-1 items-center gap-2.5">
+              <h1
+                className="truncate text-base font-semibold text-foreground sm:text-lg"
+              >
+                {pageTitles[activeTab]}
+              </h1>
+              {activeTab === "cost" && (
+                <span className={APP_TESTING_BADGE}>Testing only</span>
+              )}
+            </div>
             <div className="flex shrink-0 items-center gap-2 lg:hidden">
               {user && (
                 <div className="flex h-8 w-8 items-center justify-center rounded-full bg-brand text-xs font-semibold text-white">
@@ -143,7 +176,7 @@ export default function Dashboard({ initialUser }: DashboardProps) {
             <TabPanel
               activeTab={activeTab}
               tab="messages"
-              direction={tabDirection}
+              mounted={isTabMounted("messages")}
               className="flex min-h-0 flex-col overflow-hidden"
             >
               <ChatApp />
@@ -152,49 +185,68 @@ export default function Dashboard({ initialUser }: DashboardProps) {
             <TabPanel
               activeTab={activeTab}
               tab="calls"
-              direction={tabDirection}
-              className="overflow-hidden p-3 sm:p-4"
+              mounted={isTabMounted("calls")}
+              className="min-h-0 overflow-hidden"
             >
-              <CallPanel
-                prefillPhone={callPrefillPhone}
-                currentUser={
-                  user ? { id: user.id, fullName: user.fullName } : null
-                }
-              />
+              <AppPageFrame fillHeight>
+                <CallPanel
+                  prefillPhone={callPrefillPhone}
+                  currentUser={
+                    user ? { id: user.id, fullName: user.fullName } : null
+                  }
+                />
+              </AppPageFrame>
             </TabPanel>
 
             {isAdmin && (
               <TabPanel
                 activeTab={activeTab}
                 tab="campaign"
-                direction={tabDirection}
-                className="overflow-y-auto p-4 sm:p-6"
+                mounted={isTabMounted("campaign")}
+                className="min-h-0 overflow-hidden"
               >
-                <Suspense fallback={null}>
-                  <Campaigns />
-                </Suspense>
+                <AppPageFrame>
+                  <Suspense fallback={<PageLoadingSkeleton />}>
+                    <Campaigns />
+                  </Suspense>
+                </AppPageFrame>
+              </TabPanel>
+            )}
+
+            {isAdmin && (
+              <TabPanel
+                activeTab={activeTab}
+                tab="cost"
+                mounted={isTabMounted("cost")}
+                className="min-h-0 overflow-hidden"
+              >
+                <AppPageFrame>
+                  <CostDashboard />
+                </AppPageFrame>
               </TabPanel>
             )}
 
             <TabPanel
               activeTab={activeTab}
               tab="team"
-              direction={tabDirection}
-              className="overflow-y-auto p-4 sm:p-6"
+              mounted={isTabMounted("team")}
+              className="min-h-0 overflow-hidden"
             >
-              <div className="mx-auto max-w-3xl">
+              <AppPageFrame>
                 <UserManagement canInvite={isAdmin} />
-              </div>
+              </AppPageFrame>
             </TabPanel>
 
             {isAdmin && (
               <TabPanel
                 activeTab={activeTab}
                 tab="invoices"
-                direction={tabDirection}
-                className="overflow-y-auto p-4 sm:p-6"
+                mounted={isTabMounted("invoices")}
+                className="min-h-0 overflow-hidden"
               >
-                <InvoiceGenerator />
+                <AppPageFrame>
+                  <InvoiceGenerator />
+                </AppPageFrame>
               </TabPanel>
             )}
           </div>
