@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/auth";
-import { createCampaign, listCampaigns } from "@/lib/db/campaigns";
+import { CAMPAIGN_LIST_PAGE_SIZE } from "@/lib/campaigns";
+import { createCampaign, listCampaignsPaginated } from "@/lib/db/campaigns";
 
 function authError(err: unknown) {
   const message = err instanceof Error ? err.message : "Forbidden";
@@ -8,7 +9,7 @@ function authError(err: unknown) {
   return NextResponse.json({ error: message }, { status });
 }
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
     await requireAdmin();
   } catch (err) {
@@ -16,8 +17,12 @@ export async function GET() {
   }
 
   try {
-    const campaigns = await listCampaigns();
-    return NextResponse.json({ campaigns });
+    const page = Number(request.nextUrl.searchParams.get("page") ?? "1");
+    const limit = Number(
+      request.nextUrl.searchParams.get("limit") ?? String(CAMPAIGN_LIST_PAGE_SIZE)
+    );
+    const result = await listCampaignsPaginated(page, limit);
+    return NextResponse.json(result);
   } catch (err) {
     const message = err instanceof Error ? err.message : "Failed to load campaigns";
     return NextResponse.json({ error: message }, { status: 500 });

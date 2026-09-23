@@ -2,6 +2,9 @@ export const CAMPAIGN_NAME_MAX = 80;
 export const CAMPAIGN_MESSAGE_MAX = 1600;
 export const CAMPAIGN_RECIPIENT_MAX = 5000;
 export const CAMPAIGN_BATCH_SIZE = 5;
+export const CAMPAIGN_LIST_PAGE_SIZE = 10;
+export const CAMPAIGN_DELIVERY_PAGE_SIZE = 20;
+export const CAMPAIGN_CONTACT_PREVIEW_PAGE_SIZE = 15;
 
 export type CampaignStatus =
   | "draft"
@@ -38,6 +41,14 @@ export interface RecipientView {
   status: RecipientStatus;
   error: string | null;
   updatedAt: string;
+}
+
+export interface PaginatedResult<T> {
+  items: T[];
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
 }
 
 export interface CampaignContactInput {
@@ -118,12 +129,25 @@ export function classifySendError(err: unknown): {
 }
 
 export function canResumeCampaign(
-  campaign: Pick<CampaignSummary, "status" | "pending">
+  campaign: Pick<CampaignSummary, "status" | "pending" | "sent">,
+  skipAlreadySent = true
 ): boolean {
-  return (
-    campaign.pending > 0 &&
-    (campaign.status === "paused" ||
-      campaign.status === "interrupted" ||
-      campaign.status === "draft")
-  );
+  const resumableStatus =
+    campaign.status === "paused" ||
+    campaign.status === "interrupted" ||
+    campaign.status === "draft";
+
+  if (resumableStatus && campaign.pending > 0) {
+    return true;
+  }
+
+  if (!skipAlreadySent && campaign.sent > 0) {
+    return (
+      campaign.status === "completed" ||
+      campaign.status === "paused" ||
+      campaign.status === "interrupted"
+    );
+  }
+
+  return false;
 }

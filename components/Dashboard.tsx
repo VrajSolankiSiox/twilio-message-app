@@ -49,12 +49,17 @@ export default function Dashboard({ initialUser }: DashboardProps) {
   const pageTitles: Record<NavTab, string> = {
     messages: "Messages",
     calls: "Live Calls",
-    bulk: "Campaigns",
+    campaign: "Campaigns",
     team: isAdmin ? "Team Management" : "Teams",
     invoices: "Invoice Generator",
   };
 
   useEffect(() => {
+    if (pathname === "/bulk") {
+      router.replace("/campaign");
+      return;
+    }
+
     if (pathnameToTab(pathname) === null) {
       router.replace("/messages");
       return;
@@ -153,7 +158,7 @@ export default function Dashboard({ initialUser }: DashboardProps) {
             {isAdmin && (
               <TabPanel
                 activeTab={activeTab}
-                tab="bulk"
+                tab="campaign"
                 direction={tabDirection}
                 className="overflow-y-auto p-4 sm:p-6"
               >

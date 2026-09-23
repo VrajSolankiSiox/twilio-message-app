@@ -1,10 +1,13 @@
 import { ObjectId } from "mongodb";
 import {
+  CAMPAIGN_DELIVERY_PAGE_SIZE,
+  CAMPAIGN_LIST_PAGE_SIZE,
   CAMPAIGN_MESSAGE_MAX,
   CAMPAIGN_NAME_MAX,
   CAMPAIGN_RECIPIENT_MAX,
   type CampaignStatus,
   type CampaignSummary,
+  type PaginatedResult,
   type RecipientStatus,
   type RecipientView,
 } from "@/lib/campaigns";
@@ -221,45 +224,102 @@ export async function reconcileStaleCampaigns(): Promise<void> {
   }
 }
 
-export async function listCampaigns(): Promise<CampaignSummary[]> {
-  await reconcileStaleCampaigns();
-  const col = await campaigns();
-  const docs = await col.find({}).sort({ updatedAt: -1 }).limit(100).toArray();
-  const now = new Date();
-  return docs.map((doc) => serializeCampaign(doc, now));
+function clampPage(page: number): number {
+  return Number.isFinite(page) && page > 0 ? Math.floor(page) : 1;
 }
 
-export async function getCampaignDetail(id: string): Promise<{
-  campaign: CampaignSummary;
-  failures: RecipientView[];
-  recentSends: RecipientView[];
-} | null> {
+function clampLimit(limit: number, fallback: number, max: number): number {
+  if (!Number.isFinite(limit) || limit <= 0) return fallback;
+  return Math.min(Math.floor(limit), max);
+}
+
+export async function listCampaignsPaginated(
+  page = 1,
+  limit = CAMPAIGN_LIST_PAGE_SIZE
+): Promise<PaginatedResult<CampaignSummary>> {
+  await reconcileStaleCampaigns();
+  const col = await campaigns();
+  const safePage = clampPage(page);
+  const safeLimit = clampLimit(limit, CAMPAIGN_LIST_PAGE_SIZE, 50);
+  const skip = (safePage - 1) * safeLimit;
+  const now = new Date();
+
+  const [total, docs] = await Promise.all([
+    col.countDocuments({}),
+    col
+      .find({})
+      .sort({ updatedAt: -1 })
+      .skip(skip)
+      .limit(safeLimit)
+      .toArray(),
+  ]);
+
+  return {
+    items: docs.map((doc) => serializeCampaign(doc, now)),
+    total,
+    page: safePage,
+    limit: safeLimit,
+    totalPages: Math.max(1, Math.ceil(total / safeLimit)),
+  };
+}
+
+export async function listCampaignRecipients(
+  id: string,
+  options: {
+    page?: number;
+    limit?: number;
+    status?: "all" | RecipientStatus;
+  }
+): Promise<PaginatedResult<RecipientView> | null> {
+  const _id = parseId(id);
+  if (!_id) return null;
+
+  const safePage = clampPage(options.page ?? 1);
+  const safeLimit = clampLimit(
+    options.limit ?? CAMPAIGN_DELIVERY_PAGE_SIZE,
+    CAMPAIGN_DELIVERY_PAGE_SIZE,
+    100
+  );
+  const skip = (safePage - 1) * safeLimit;
+  const status = options.status ?? "all";
+
+  const recipientCol = await recipients();
+  const filter: { campaignId: ObjectId; status?: RecipientStatus | { $in: RecipientStatus[] } } =
+    { campaignId: _id };
+
+  if (status === "all") {
+    filter.status = { $in: ["sent", "failed"] };
+  } else {
+    filter.status = status;
+  }
+
+  const [total, docs] = await Promise.all([
+    recipientCol.countDocuments(filter),
+    recipientCol
+      .find(filter)
+      .sort({ updatedAt: -1 })
+      .skip(skip)
+      .limit(safeLimit)
+      .toArray(),
+  ]);
+
+  return {
+    items: docs.map(serializeRecipient),
+    total,
+    page: safePage,
+    limit: safeLimit,
+    totalPages: Math.max(1, Math.ceil(total / safeLimit)),
+  };
+}
+
+export async function getCampaignDetail(id: string): Promise<CampaignSummary | null> {
   const _id = parseId(id);
   if (!_id) return null;
   await reconcileStaleCampaigns();
   const col = await campaigns();
   const doc = await col.findOne({ _id });
   if (!doc) return null;
-
-  const recipientCol = await recipients();
-  const [failedDocs, sentDocs] = await Promise.all([
-    recipientCol
-      .find({ campaignId: _id, status: "failed" })
-      .sort({ updatedAt: -1 })
-      .limit(200)
-      .toArray(),
-    recipientCol
-      .find({ campaignId: _id, status: "sent" })
-      .sort({ updatedAt: -1 })
-      .limit(40)
-      .toArray(),
-  ]);
-
-  return {
-    campaign: serializeCampaign(doc),
-    failures: failedDocs.map(serializeRecipient),
-    recentSends: sentDocs.map(serializeRecipient),
-  };
+  return serializeCampaign(doc);
 }
 
 export async function createCampaign(input: {
@@ -349,9 +409,40 @@ export async function createCampaign(input: {
   return { campaign: serializeCampaign(campaign), skipped };
 }
 
+export async function requeueSentRecipientsForFollowUp(
+  id: string
+): Promise<CampaignSummary | null> {
+  const _id = parseId(id);
+  if (!_id) return null;
+  await ensureIndexes();
+  const recipientCol = await recipients();
+  const now = new Date();
+  await recipientCol.updateMany(
+    { campaignId: _id, status: "sent" },
+    {
+      $set: {
+        status: "pending",
+        sid: null,
+        error: null,
+        updatedAt: now,
+      },
+    }
+  );
+
+  const counts = await countsFor(_id);
+  const col = await campaigns();
+  const updated = await col.findOneAndUpdate(
+    { _id },
+    { $set: { ...counts, updatedAt: now } },
+    { returnDocument: "after" }
+  );
+  return updated ? serializeCampaign(updated) : null;
+}
+
 export async function claimCampaignForSend(
   id: string,
-  resume: boolean
+  resume: boolean,
+  options?: { allowCompletedFollowUp?: boolean }
 ): Promise<ClaimResult> {
   const _id = parseId(id);
   if (!_id) return { ok: false, reason: "not_found", campaign: null };
@@ -360,7 +451,12 @@ export async function claimCampaignForSend(
   const col = await campaigns();
   const now = new Date();
   const statuses: CampaignStatus[] = ["draft", "sending", "interrupted"];
-  if (resume) statuses.push("paused");
+  if (resume) {
+    statuses.push("paused");
+    if (options?.allowCompletedFollowUp) {
+      statuses.push("completed");
+    }
+  }
 
   const lockToken = crypto.randomUUID();
   const updated = await col.findOneAndUpdate(

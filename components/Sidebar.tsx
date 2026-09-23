@@ -4,7 +4,7 @@ import { useCallback, useLayoutEffect, useRef, useState } from "react";
 import Logo from "@/components/Logo";
 import { NAV_ITEMS } from "@/lib/nav-items";
 
-export type NavTab = "messages" | "calls" | "bulk" | "team" | "invoices";
+export type NavTab = "messages" | "calls" | "campaign" | "team" | "invoices";
 
 interface SidebarProps {
   activeTab: NavTab;

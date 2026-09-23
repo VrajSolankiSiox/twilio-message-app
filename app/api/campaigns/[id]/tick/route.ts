@@ -10,6 +10,7 @@ import {
   markRecipientFailed,
   markRecipientSent,
   nextPendingRecipients,
+  requeueSentRecipientsForFollowUp,
   serializeCampaign,
 } from "@/lib/db/campaigns";
 import { saveMessage } from "@/lib/db/messages";
@@ -34,14 +35,24 @@ export async function POST(
 
   const { id } = await context.params;
   let resume = false;
+  let skipAlreadySent = true;
+  let allowResendToSent = false;
   try {
     const body = await request.json();
     resume = body?.resume === true;
+    skipAlreadySent = body?.skipAlreadySent !== false;
+    allowResendToSent = body?.allowResendToSent === true;
   } catch {
     resume = false;
   }
 
-  const claim = await claimCampaignForSend(id, resume);
+  if (allowResendToSent && !skipAlreadySent) {
+    await requeueSentRecipientsForFollowUp(id);
+  }
+
+  const claim = await claimCampaignForSend(id, resume, {
+    allowCompletedFollowUp: resume && allowResendToSent,
+  });
   if (!claim.ok) {
     if (claim.reason === "not_found") {
       return NextResponse.json({ error: "Campaign not found" }, { status: 404 });

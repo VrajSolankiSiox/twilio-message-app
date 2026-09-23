@@ -2,6 +2,9 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  CAMPAIGN_CONTACT_PREVIEW_PAGE_SIZE,
+  CAMPAIGN_DELIVERY_PAGE_SIZE,
+  CAMPAIGN_LIST_PAGE_SIZE,
   campaignProgress,
   canResumeCampaign,
   estimateSms,
@@ -63,11 +66,47 @@ function statusClass(status: CampaignStatus): string {
   }
 }
 
-function mergeRecipients(incoming: RecipientView[], existing: RecipientView[]) {
-  const map = new Map(existing.map((item) => [item.phone, item]));
-  for (const item of incoming) map.set(item.phone, item);
-  return Array.from(map.values()).sort(
-    (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
+function PaginationBar({
+  page,
+  totalPages,
+  total,
+  onPageChange,
+  disabled,
+  noun = "items",
+}: {
+  page: number;
+  totalPages: number;
+  total: number;
+  onPageChange: (page: number) => void;
+  disabled?: boolean;
+  noun?: string;
+}) {
+  if (total === 0) return null;
+
+  return (
+    <div className="flex flex-col gap-3 border-t border-border pt-4 sm:flex-row sm:items-center sm:justify-between">
+      <p className="text-xs text-zinc-500">
+        {total} {noun} · Page {page} of {totalPages}
+      </p>
+      <div className="flex gap-2">
+        <button
+          type="button"
+          disabled={disabled || page <= 1}
+          onClick={() => onPageChange(page - 1)}
+          className="rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-zinc-600 transition-colors hover:bg-brand-light disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          Previous
+        </button>
+        <button
+          type="button"
+          disabled={disabled || page >= totalPages}
+          onClick={() => onPageChange(page + 1)}
+          className="rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-zinc-600 transition-colors hover:bg-brand-light disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          Next
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -119,6 +158,42 @@ function StatusBadge({ status }: { status: CampaignStatus }) {
   );
 }
 
+function SkipAlreadySentCheckbox({
+  checked,
+  onChange,
+  disabled,
+}: {
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+  disabled?: boolean;
+}) {
+  return (
+    <label
+      className={`flex items-start gap-3 rounded-xl border border-border bg-background px-4 py-3 transition-opacity ${
+        disabled ? "cursor-not-allowed opacity-60" : "cursor-pointer hover:border-brand/25"
+      }`}
+    >
+      <input
+        type="checkbox"
+        checked={checked}
+        disabled={disabled}
+        onChange={(event) => onChange(event.target.checked)}
+        className="mt-0.5 h-4 w-4 shrink-0 rounded border-border text-brand focus:ring-2 focus:ring-brand/20"
+      />
+      <span className="min-w-0">
+        <span className="block text-sm font-medium text-foreground">
+          Skip contacts who already received this message
+        </span>
+        <span className="mt-0.5 block text-xs leading-relaxed text-zinc-500">
+          {checked
+            ? "Only remaining contacts are messaged when you resume."
+            : "Follow-up mode: contacts who were already sent will receive this message again."}
+        </span>
+      </span>
+    </label>
+  );
+}
+
 function ProgressBar({ value }: { value: number }) {
   return (
     <div
@@ -150,8 +225,15 @@ export default function Campaigns() {
   const [listLoading, setListLoading] = useState(true);
   const [listError, setListError] = useState<string | null>(null);
   const [campaign, setCampaign] = useState<CampaignSummary | null>(null);
-  const [failures, setFailures] = useState<RecipientView[]>([]);
-  const [recentSends, setRecentSends] = useState<RecipientView[]>([]);
+  const [deliveryItems, setDeliveryItems] = useState<RecipientView[]>([]);
+  const [deliveryPage, setDeliveryPage] = useState(1);
+  const [deliveryTotalPages, setDeliveryTotalPages] = useState(1);
+  const [deliveryTotal, setDeliveryTotal] = useState(0);
+  const [deliveryLoading, setDeliveryLoading] = useState(false);
+  const [listPage, setListPage] = useState(1);
+  const [listTotalPages, setListTotalPages] = useState(1);
+  const [listTotal, setListTotal] = useState(0);
+  const [contactPage, setContactPage] = useState(1);
   const [detailLoading, setDetailLoading] = useState(false);
   const [runningId, setRunningId] = useState<string | null>(null);
   const [dispatching, setDispatching] = useState(false);
@@ -167,6 +249,30 @@ export default function Campaigns() {
   const [dragOver, setDragOver] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
+  const [skipAlreadySent, setSkipAlreadySent] = useState(true);
+  const activityFilterRef = useRef<ActivityFilter>("all");
+
+  const loadDelivery = useCallback(
+    async (id: string, page: number, status: ActivityFilter) => {
+      setDeliveryLoading(true);
+      try {
+        const res = await fetch(
+          `/api/campaigns/${id}/recipients?page=${page}&limit=${CAMPAIGN_DELIVERY_PAGE_SIZE}&status=${status}`
+        );
+        const data = await res.json();
+        if (!res.ok || detailIdRef.current !== id) return;
+        setDeliveryItems(data.items ?? []);
+        setDeliveryPage(data.page ?? page);
+        setDeliveryTotalPages(data.totalPages ?? 1);
+        setDeliveryTotal(data.total ?? 0);
+      } catch {
+        // Delivery list refreshes on the next poll or page change.
+      } finally {
+        setDeliveryLoading(false);
+      }
+    },
+    []
+  );
 
   const applyUpdate = useCallback(
     (next: CampaignSummary, processed: RecipientView[] = []) => {
@@ -193,46 +299,28 @@ export default function Campaigns() {
       campaignRef.current = next;
       setCampaign(next);
 
-      if (processed.length === 0) return;
-
-      const sent = processed.filter((item) => item.status === "sent");
-      const failed = processed.filter((item) => item.status === "failed");
-      if (sent.length > 0) {
-        setRecentSends((prev) => mergeRecipients(sent, prev).slice(0, 40));
-      }
-      if (failed.length > 0 || sent.length > 0) {
-        setFailures((prev) => {
-          const sentPhones = new Set(sent.map((item) => item.phone));
-          const kept = prev.filter((item) => !sentPhones.has(item.phone));
-          return mergeRecipients(failed, kept).slice(0, 200);
-        });
+      if (processed.length > 0 && detailIdRef.current === next.id) {
+        void loadDelivery(next.id, 1, activityFilterRef.current);
       }
     },
-    []
+    [loadDelivery]
   );
 
-  const loadList = useCallback(async (silent = false) => {
+  const loadList = useCallback(async (page: number, silent = false) => {
     if (!silent) setListLoading(true);
     try {
-      const res = await fetch("/api/campaigns");
+      const res = await fetch(
+        `/api/campaigns?page=${page}&limit=${CAMPAIGN_LIST_PAGE_SIZE}`
+      );
       const data = await res.json();
       if (!res.ok) {
         setListError(data.error || "Failed to load campaigns");
         return;
       }
-      const incoming = (data.campaigns ?? []) as CampaignSummary[];
-      setCampaigns((prev) => {
-        const incomingIds = new Set(incoming.map((item) => item.id));
-        const merged = incoming.map((item) => {
-          const existing = prev.find((candidate) => candidate.id === item.id);
-          if (existing && existing.updatedAt > item.updatedAt) return existing;
-          return item;
-        });
-        const extras = prev.filter((item) => !incomingIds.has(item.id));
-        return [...extras, ...merged].sort((a, b) =>
-          b.updatedAt.localeCompare(a.updatedAt)
-        );
-      });
+      setCampaigns(data.items ?? []);
+      setListPage(data.page ?? page);
+      setListTotalPages(data.totalPages ?? 1);
+      setListTotal(data.total ?? 0);
       setListError(null);
     } catch {
       setListError("Failed to load campaigns");
@@ -242,18 +330,28 @@ export default function Campaigns() {
   }, []);
 
   useEffect(() => {
-    void loadList();
-  }, [loadList]);
+    activityFilterRef.current = activityFilter;
+  }, [activityFilter]);
+
+  useEffect(() => {
+    if (view !== "list") return;
+    void loadList(listPage, false);
+  }, [view, listPage, loadList]);
 
   const hasLiveSend = campaigns.some((item) => item.status === "sending");
 
   useEffect(() => {
     if (view !== "list" || !hasLiveSend) return;
     const timer = setInterval(() => {
-      void loadList(true);
+      void loadList(listPage, true);
     }, 3000);
     return () => clearInterval(timer);
-  }, [view, hasLiveSend, loadList]);
+  }, [view, hasLiveSend, listPage, loadList]);
+
+  useEffect(() => {
+    if (view !== "detail" || !campaign) return;
+    void loadDelivery(campaign.id, deliveryPage, activityFilter);
+  }, [view, campaign, deliveryPage, activityFilter, loadDelivery]);
 
   const refreshDetail = useCallback(
     async (id: string) => {
@@ -268,8 +366,6 @@ export default function Campaigns() {
         if (detailIdRef.current === id) {
           campaignRef.current = data.campaign;
           setCampaign(data.campaign);
-          setFailures(data.failures ?? []);
-          setRecentSends(data.recentSends ?? []);
         }
         applyUpdate(data.campaign);
       } catch {
@@ -290,7 +386,12 @@ export default function Campaigns() {
   }, [view, campaign, runningId, refreshDetail]);
 
   const runLoop = useCallback(
-    async (id: string, resume: boolean) => {
+    async (
+      id: string,
+      resume: boolean,
+      skipSent: boolean,
+      enableFollowUp = false
+    ) => {
       if (runnerRef.current) {
         if (runningIdRef.current !== id) {
           setError("Another campaign is still sending. Pause it before starting this one.");
@@ -306,6 +407,7 @@ export default function Campaigns() {
       setError(null);
       setNotice(null);
       let allowResume = resume;
+      let firstTick = true;
 
       try {
         while (runTokenRef.current === token && !pauseRef.current) {
@@ -315,7 +417,12 @@ export default function Campaigns() {
             response = await fetch(`/api/campaigns/${id}/tick`, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ resume: allowResume }),
+              body: JSON.stringify({
+                resume: allowResume,
+                skipAlreadySent: skipSent,
+                allowResendToSent:
+                  enableFollowUp && !skipSent && firstTick,
+              }),
             });
           } catch {
             if (runTokenRef.current !== token) return;
@@ -334,6 +441,7 @@ export default function Campaigns() {
           }
 
           allowResume = false;
+          firstTick = false;
           const data = await response.json().catch(() => null);
           if (runTokenRef.current !== token) return;
 
@@ -422,14 +530,14 @@ export default function Campaigns() {
       setView("detail");
       detailIdRef.current = id;
       setActivityFilter("all");
+      setDeliveryPage(1);
       setDetailLoading(campaignRef.current?.id !== id);
       setError(null);
       setNotice(null);
       if (campaignRef.current?.id !== id) {
         campaignRef.current = null;
         setCampaign(null);
-        setFailures([]);
-        setRecentSends([]);
+        setDeliveryItems([]);
       }
 
       try {
@@ -447,13 +555,11 @@ export default function Campaigns() {
         if (!stale) {
           campaignRef.current = data.campaign;
           setCampaign(data.campaign);
-          setFailures(data.failures ?? []);
-          setRecentSends(data.recentSends ?? []);
         }
         applyUpdate(data.campaign);
 
         if (resume) {
-          await runLoop(id, true);
+          await runLoop(id, true, skipAlreadySent, true);
         }
       } catch {
         setError("Network error. Please try again.");
@@ -461,16 +567,17 @@ export default function Campaigns() {
         setDetailLoading(false);
       }
     },
-    [applyUpdate, runLoop]
+    [applyUpdate, runLoop, skipAlreadySent]
   );
 
   const handleBack = () => {
     detailIdRef.current = null;
     campaignRef.current = null;
+    setSkipAlreadySent(true);
     setView("list");
     setNotice(null);
     setError(null);
-    void loadList(true);
+    void loadList(listPage, true);
   };
 
   const handlePause = async (id: string) => {
@@ -516,10 +623,10 @@ export default function Campaigns() {
         setNotice("There are no failed messages to retry.");
         return;
       }
-      setFailures([]);
+      setDeliveryPage(1);
       if (data.campaign) applyUpdate(data.campaign);
       setNotice(null);
-      await runLoop(id, true);
+      await runLoop(id, true, true, false);
     } catch {
       setError("Network error while retrying failed messages.");
     } finally {
@@ -538,6 +645,7 @@ export default function Campaigns() {
     }
     setContacts(parsed);
     setFileName(file.name);
+    setContactPage(1);
 
     const namedContacts = parsed.filter((contact) => contact.name);
     if (namedContacts.length > 0) {
@@ -612,15 +720,15 @@ export default function Campaigns() {
       detailIdRef.current = data.campaign.id;
       campaignRef.current = data.campaign;
       setCampaign(data.campaign);
-      setFailures([]);
-      setRecentSends([]);
+      setDeliveryItems([]);
+      setDeliveryPage(1);
       setActivityFilter("all");
       setNotice(null);
       setError(null);
       setView("detail");
       applyUpdate(data.campaign);
       handleClearForm();
-      await runLoop(data.campaign.id, false);
+      await runLoop(data.campaign.id, false, skipAlreadySent, false);
     } catch {
       setFormError("Network error. Please try again.");
     } finally {
@@ -629,12 +737,15 @@ export default function Campaigns() {
   };
 
   const sms = estimateSms(message);
-  const activity =
-    activityFilter === "failed"
-      ? failures
-      : activityFilter === "sent"
-        ? recentSends
-        : mergeRecipients(recentSends, failures);
+  const contactPreviewPages = Math.max(
+    1,
+    Math.ceil(contacts.length / CAMPAIGN_CONTACT_PREVIEW_PAGE_SIZE)
+  );
+  const contactPreviewStart = (contactPage - 1) * CAMPAIGN_CONTACT_PREVIEW_PAGE_SIZE;
+  const contactPreview = contacts.slice(
+    contactPreviewStart,
+    contactPreviewStart + CAMPAIGN_CONTACT_PREVIEW_PAGE_SIZE
+  );
 
   return (
     <div className="mx-auto max-w-3xl space-y-4 sm:space-y-6">
@@ -675,7 +786,7 @@ export default function Campaigns() {
               <p>{listError}</p>
               <button
                 type="button"
-                onClick={() => void loadList()}
+                onClick={() => void loadList(listPage)}
                 className="mt-2 text-sm font-medium underline"
               >
                 Try again
@@ -694,7 +805,7 @@ export default function Campaigns() {
             </div>
           )}
 
-          {!listLoading && campaigns.length === 0 && !listError && (
+          {!listLoading && listTotal === 0 && !listError && (
             <section className="rounded-2xl border border-dashed border-brand/30 bg-surface px-6 py-16 text-center shadow-sm">
               <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-brand-light text-brand">
                 <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -717,7 +828,7 @@ export default function Campaigns() {
           <div className="space-y-3">
             {campaigns.map((item) => {
               const progress = campaignProgress(item);
-              const resumable = canResumeCampaign(item);
+              const resumable = canResumeCampaign(item, true);
               return (
                 <article
                   key={item.id}
@@ -789,6 +900,15 @@ export default function Campaigns() {
               );
             })}
           </div>
+
+          <PaginationBar
+            page={listPage}
+            totalPages={listTotalPages}
+            total={listTotal}
+            onPageChange={setListPage}
+            disabled={listLoading}
+            noun="campaigns"
+          />
         </>
       )}
 
@@ -855,8 +975,8 @@ export default function Campaigns() {
                   {contacts.length} contact{contacts.length === 1 ? "" : "s"} loaded
                 </p>
                 <ul className="max-h-36 space-y-1 overflow-y-auto text-sm text-zinc-600">
-                  {contacts.map((contact, index) => (
-                    <li key={`${contact.phone}-${index}`}>
+                  {contactPreview.map((contact, index) => (
+                    <li key={`${contact.phone}-${contactPreviewStart + index}`}>
                       {contact.name ? (
                         <>
                           <span className="font-medium text-foreground">{contact.name}</span>
@@ -871,6 +991,13 @@ export default function Campaigns() {
                     </li>
                   ))}
                 </ul>
+                <PaginationBar
+                  page={contactPage}
+                  totalPages={contactPreviewPages}
+                  total={contacts.length}
+                  onPageChange={setContactPage}
+                  noun="contacts"
+                />
               </div>
             )}
           </section>
@@ -894,6 +1021,12 @@ export default function Campaigns() {
                 ` · about ${sms.segments} ${sms.encoding} segment${sms.segments === 1 ? "" : "s"}`}
             </p>
           </section>
+
+          <SkipAlreadySentCheckbox
+            checked={skipAlreadySent}
+            onChange={setSkipAlreadySent}
+            disabled={starting}
+          />
 
           {formError && (
             <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
@@ -922,9 +1055,9 @@ export default function Campaigns() {
             </button>
           </div>
           <p className="text-xs leading-relaxed text-zinc-400">
-            Invalid numbers are marked failed and the rest of the campaign keeps going. If
-            sending stops early, open the campaign and resume — contacts already sent are
-            skipped.
+            Invalid numbers are marked failed and the rest of the campaign keeps going. When
+            the skip box is checked, resume only messages contacts who have not been sent yet.
+            Uncheck it to send follow-ups to everyone who already received this campaign.
           </p>
         </>
       )}
@@ -940,17 +1073,26 @@ export default function Campaigns() {
           {campaign && (
             <CampaignDetail
               campaign={campaign}
-              failures={failures}
-              activity={activity}
+              deliveryItems={deliveryItems}
+              deliveryPage={deliveryPage}
+              deliveryTotalPages={deliveryTotalPages}
+              deliveryTotal={deliveryTotal}
+              deliveryLoading={deliveryLoading}
               activityFilter={activityFilter}
-              onFilter={setActivityFilter}
+              onFilter={(filter) => {
+                setActivityFilter(filter);
+                setDeliveryPage(1);
+              }}
+              onDeliveryPageChange={setDeliveryPage}
               dispatching={dispatching && runningId === campaign.id}
               sending={campaign.status === "sending" || runningId === campaign.id}
               actionBusy={actionBusy}
               notice={notice}
               error={error}
               onPause={() => void handlePause(campaign.id)}
-              onResume={() => void openCampaign(campaign.id, true)}
+              skipAlreadySent={skipAlreadySent}
+              onSkipAlreadySentChange={setSkipAlreadySent}
+              onResume={() => void runLoop(campaign.id, true, skipAlreadySent, true)}
               onRetry={() => void handleRetry(campaign.id)}
             />
           )}
@@ -992,10 +1134,14 @@ function Count({
 
 function CampaignDetail({
   campaign,
-  failures,
-  activity,
+  deliveryItems,
+  deliveryPage,
+  deliveryTotalPages,
+  deliveryTotal,
+  deliveryLoading,
   activityFilter,
   onFilter,
+  onDeliveryPageChange,
   dispatching,
   sending,
   actionBusy,
@@ -1004,12 +1150,18 @@ function CampaignDetail({
   onPause,
   onResume,
   onRetry,
+  skipAlreadySent,
+  onSkipAlreadySentChange,
 }: {
   campaign: CampaignSummary;
-  failures: RecipientView[];
-  activity: RecipientView[];
+  deliveryItems: RecipientView[];
+  deliveryPage: number;
+  deliveryTotalPages: number;
+  deliveryTotal: number;
+  deliveryLoading: boolean;
   activityFilter: ActivityFilter;
   onFilter: (filter: ActivityFilter) => void;
+  onDeliveryPageChange: (page: number) => void;
   dispatching: boolean;
   sending: boolean;
   actionBusy: boolean;
@@ -1018,10 +1170,12 @@ function CampaignDetail({
   onPause: () => void;
   onResume: () => void;
   onRetry: () => void;
+  skipAlreadySent: boolean;
+  onSkipAlreadySentChange: (checked: boolean) => void;
 }) {
   const progress = campaignProgress(campaign);
-  const resumable = canResumeCampaign(campaign) && !sending;
-  const latest = activity[0];
+  const resumable = canResumeCampaign(campaign, skipAlreadySent) && !sending;
+  const latest = deliveryItems[0];
 
   return (
     <div className="space-y-4">
@@ -1097,6 +1251,16 @@ function CampaignDetail({
             {campaign.skippedCount} row{campaign.skippedCount === 1 ? "" : "s"} skipped while
             importing (duplicates or invalid numbers).
           </p>
+        )}
+
+        {!sending && (resumable || campaign.status === "completed") && (
+          <div className="mt-5">
+            <SkipAlreadySentCheckbox
+              checked={skipAlreadySent}
+              onChange={onSkipAlreadySentChange}
+              disabled={actionBusy}
+            />
+          </div>
         )}
 
         <div className="mt-5 flex flex-col gap-2 sm:flex-row">
@@ -1184,7 +1348,9 @@ function CampaignDetail({
           </div>
         </div>
 
-        {activity.length === 0 ? (
+        {deliveryLoading && deliveryItems.length === 0 ? (
+          <div className="h-24 animate-pulse rounded-xl bg-background" />
+        ) : deliveryItems.length === 0 ? (
           <p className="rounded-xl bg-background px-4 py-8 text-center text-sm text-zinc-500">
             {campaign.status === "draft"
               ? "Start the campaign to see each number as it sends."
@@ -1192,7 +1358,7 @@ function CampaignDetail({
           </p>
         ) : (
           <div className="max-h-96 space-y-2 overflow-y-auto">
-            {activity.map((item) => (
+            {deliveryItems.map((item) => (
               <div
                 key={`${item.phone}-${item.status}`}
                 className={`rounded-xl px-4 py-3 text-sm ${
@@ -1219,16 +1385,14 @@ function CampaignDetail({
             ))}
           </div>
         )}
-        {activityFilter === "failed" && campaign.failed > failures.length && failures.length > 0 && (
-          <p className="mt-3 text-xs text-zinc-400">
-            Showing the latest {failures.length} of {campaign.failed} failed messages.
-          </p>
-        )}
-        {activityFilter === "sent" && campaign.sent > activity.length && (
-          <p className="mt-3 text-xs text-zinc-400">
-            Showing the latest {activity.length} sent messages.
-          </p>
-        )}
+        <PaginationBar
+          page={deliveryPage}
+          totalPages={deliveryTotalPages}
+          total={deliveryTotal}
+          onPageChange={onDeliveryPageChange}
+          disabled={deliveryLoading}
+          noun="messages"
+        />
       </section>
     </div>
   );

@@ -40,7 +40,7 @@ export const NAV_ITEMS: NavItem[] = [
     ),
   },
   {
-    id: "bulk",
+    id: "campaign",
     label: "Campaigns",
     shortLabel: "Campaigns",
     adminOnly: true,

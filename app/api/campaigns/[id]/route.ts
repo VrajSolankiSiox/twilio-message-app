@@ -16,11 +16,11 @@ export async function GET(
 
   const { id } = await context.params;
   try {
-    const detail = await getCampaignDetail(id);
-    if (!detail) {
+    const campaign = await getCampaignDetail(id);
+    if (!campaign) {
       return NextResponse.json({ error: "Campaign not found" }, { status: 404 });
     }
-    return NextResponse.json(detail);
+    return NextResponse.json({ campaign });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Failed to load campaign";
     return NextResponse.json({ error: message }, { status: 500 });
