@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/auth";
 import { setConversationAssignee } from "@/lib/db/conversations";
+import { invalidateInboxCache } from "@/lib/db/inbox";
 import { findUserById } from "@/lib/db/users";
 
 export async function POST(request: NextRequest) {
@@ -49,6 +50,7 @@ export async function POST(request: NextRequest) {
     }
 
     const assignment = await setConversationAssignee(phone, assignee);
+    invalidateInboxCache();
 
     return NextResponse.json({
       assignment: {

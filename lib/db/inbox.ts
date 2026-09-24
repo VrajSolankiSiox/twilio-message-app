@@ -192,6 +192,10 @@ async function persistInboxSummaries(
 let cachedRows: ConversationAssignment[] | null = null;
 let rebuildPromise: Promise<void> | null = null;
 
+export function invalidateInboxCache(): void {
+  cachedRows = null;
+}
+
 function scheduleRebuild(): void {
   if (rebuildPromise) return;
   rebuildPromise = (async () => {
@@ -227,20 +231,10 @@ export async function listStoredConversations(): Promise<
     .collection<InboxMeta>("app_meta")
     .findOne({ _id: "inbox_summaries" }, { projection: { version: 1 } });
 
-  if (meta?.version === SUMMARY_VERSION) {
-    if (cachedRows) return cachedRows;
-    cachedRows = await readStoredInbox();
-    return cachedRows;
-  }
-
-  if (cachedRows) {
-    scheduleRebuild();
-    return cachedRows;
-  }
-
   const stored = await readStoredInbox();
+  if (meta?.version === SUMMARY_VERSION) return stored;
+
   if (stored.length > 0) {
-    cachedRows = stored;
     scheduleRebuild();
     return stored;
   }
@@ -302,6 +296,7 @@ export async function recordMessageOnConversation(
       },
     }
   );
+  invalidateInboxCache();
 }
 
 export async function getConversationIdForPhone(

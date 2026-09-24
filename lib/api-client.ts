@@ -40,7 +40,8 @@ export function setAuthToken(token: string | null): void {
     }`;
   } else {
     sessionStorage.removeItem(TOKEN_KEY);
-    document.cookie = "session=; Path=/; Max-Age=0; SameSite=Lax";
+    const secure = window.location.protocol === "https:" ? "; Secure" : "";
+    document.cookie = `session=; Path=/; Max-Age=0; SameSite=Lax${secure}`;
   }
 }
 

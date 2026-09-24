@@ -1,5 +1,5 @@
 import { SignJWT, jwtVerify } from "jose";
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { findUserById, User, UserRole, verifyUserPassword } from "@/lib/db/users";
 import { requestContext } from "@/lib/request-context";
 
@@ -90,10 +90,17 @@ export async function getSession(): Promise<SessionUser | null> {
     return scoped.token ? verifySessionToken(scoped.token) : null;
   }
 
+  const headerStore = await headers();
+  const token = tokenFromHeaders(
+    headerStore.get("authorization"),
+    headerStore.get("cookie")
+  );
+  if (token) return verifySessionToken(token);
+
   const cookieStore = await cookies();
-  const token = cookieStore.get(SESSION_COOKIE)?.value;
-  if (!token) return null;
-  return verifySessionToken(token);
+  const cookieToken = cookieStore.get(SESSION_COOKIE)?.value;
+  if (!cookieToken) return null;
+  return verifySessionToken(cookieToken);
 }
 
 export async function requireSession(): Promise<SessionUser> {

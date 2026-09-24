@@ -353,6 +353,16 @@ export default function ChatApp() {
         });
         const data = await res.json();
         if (!res.ok) {
+          if (res.status === 403) {
+            const denied = normalizePhone(phone);
+            setConversations((prev) =>
+              prev.filter((c) => normalizePhone(c.phone) !== denied)
+            );
+            setSelectedPhone((current) =>
+              current && normalizePhone(current) === denied ? null : current
+            );
+            return;
+          }
           setError(data.error || "Failed to load messages.");
           return;
         }
