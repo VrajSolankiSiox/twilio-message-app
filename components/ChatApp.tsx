@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { apiFetch, getAuthToken, wsBase } from "@/lib/api-client";
 import { usePathname, useRouter } from "next/navigation";
 import ConversationList from "@/components/ConversationList";
@@ -55,36 +55,6 @@ function useRelativeTimeClock(intervalMs = 60_000): Date {
     return () => clearInterval(id);
   }, [intervalMs]);
   return now;
-}
-
-const INBOX_CACHE_KEY = "revenelx-inbox-cache-v1";
-
-function readInboxCache(): Conversation[] {
-  if (typeof window === "undefined") return [];
-  try {
-    const raw =
-      localStorage.getItem(INBOX_CACHE_KEY) ||
-      sessionStorage.getItem(INBOX_CACHE_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw) as Conversation[];
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
-
-function writeInboxCache(conversations: Conversation[]): void {
-  try {
-    const slim = conversations.slice(0, 40).map((c) => ({
-      ...c,
-      messages: [],
-    }));
-    const raw = JSON.stringify(slim);
-    localStorage.setItem(INBOX_CACHE_KEY, raw);
-    sessionStorage.removeItem(INBOX_CACHE_KEY);
-  } catch {
-    // ignore quota
-  }
 }
 
 function formatDateDivider(dateStr: string): string {
@@ -247,16 +217,6 @@ export default function ChatApp() {
   selectedPhoneRef.current = selectedPhone;
   const inboxNotificationsReadyRef = useRef(false);
   const notifiedInboundKeysRef = useRef(new Set<string>());
-  const inboxCacheReadyRef = useRef(false);
-
-  useLayoutEffect(() => {
-    const cached = readInboxCache();
-    if (cached.length === 0) return;
-    inboxCacheReadyRef.current = true;
-    setConversations(cached);
-    setLoading(false);
-    setConversationTotal(cached.length);
-  }, []);
 
   const getNotificationContext = useCallback(
     () => ({
@@ -594,10 +554,6 @@ export default function ChatApp() {
           setConversations(data.conversations);
         }
 
-        if (!append && page === 1 && !showClosed && !showStop && !showBlank) {
-          writeInboxCache(data.conversations as Conversation[]);
-        }
-
         if (!append) {
           inboxNotificationsReadyRef.current = true;
         }
@@ -629,14 +585,10 @@ export default function ChatApp() {
     [getNotificationContext, showClosed, showStop, showBlank]
   );
 
-  const isFirstListLoad = useRef(true);
-
   useEffect(() => {
     setListPage(1);
-    const silent = isFirstListLoad.current && inboxCacheReadyRef.current;
-    isFirstListLoad.current = false;
-    if (!silent) setLoading(true);
-    void fetchConversations({ page: 1, silent });
+    setLoading(true);
+    void fetchConversations({ page: 1 });
   }, [fetchConversations]);
 
   useEffect(() => {
@@ -947,7 +899,6 @@ export default function ChatApp() {
                 onShowClosedChange={setShowClosed}
                 onShowStopChange={setShowStop}
                 onShowBlankChange={setShowBlank}
-                disabled={loading}
               />
               <MessageNotificationControls variant="chip" />
             </div>
