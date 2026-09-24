@@ -176,10 +176,10 @@ export function buildConversationsFromStored(
   }>,
   readsByPhone?: Map<string, Date>
 ): Conversation[] {
-  const conversations = rows.map((row) => {
+  const conversations: Conversation[] = rows.map((row) => {
     const phone = normalizePhone(row.phone);
     const lastMessageAt = (row.lastMessageAt ?? new Date(0)).toISOString();
-    const lastMessageDirection =
+    const lastMessageDirection: "inbound" | "outbound" =
       row.lastDirection === "inbound" ? "inbound" : "outbound";
     const lastReadAt = readsByPhone?.get(phone);
     const unread = isConversationUnread(

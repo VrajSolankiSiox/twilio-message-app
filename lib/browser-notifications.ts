@@ -150,7 +150,6 @@ export function showInboundMessageNotification(input: {
       icon: NOTIFICATION_ICON,
       badge: NOTIFICATION_ICON,
       tag: `inbound-sms-${phone}`,
-      renotify: true,
       data: { phone, path: messageConversationPath(phone) },
     });
     attachNotificationClick(notification, phone);

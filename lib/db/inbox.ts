@@ -20,7 +20,7 @@ async function assignMissingConversationIds(): Promise<void> {
   const db = await getDb();
   const col = db.collection<ConversationAssignment>("conversations");
   const missing = await col
-    .find({ $or: [{ id: { $exists: false } }, { id: null }, { id: "" }] })
+    .find({ $or: [{ id: { $exists: false } }, { id: "" }] })
     .project({ _id: 1 })
     .toArray();
 
@@ -287,7 +287,6 @@ export async function recordMessageOnConversation(
       phone: contactPhone,
       $or: [
         { lastMessageAt: { $exists: false } },
-        { lastMessageAt: null },
         { lastMessageAt: { $lte: message.dateCreated } },
       ],
     },

@@ -639,7 +639,7 @@ export default function ChatApp() {
   }, [fetchConversations]);
 
   useEffect(() => {
-    let intervalId: ReturnType<typeof window.setInterval> | null = null;
+    let intervalId: number | null = null;
 
     const pollIntervalMs = () =>
       document.hidden
