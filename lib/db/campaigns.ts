@@ -950,3 +950,20 @@ export async function requeueFailedRecipients(id: string): Promise<{
   if (!updated) return null;
   return { campaign: serializeCampaign(updated), requeued: result.modifiedCount };
 }
+
+export async function deleteCampaign(id: string): Promise<boolean> {
+  const _id = parseId(id);
+  if (!_id) return false;
+  await ensureIndexes();
+  const col = await campaigns();
+  const current = await col.findOne({ _id });
+  if (!current) return false;
+  if (current.status === "sending") {
+    throw new Error("Pause or stop the campaign before deleting it");
+  }
+
+  const recipientCol = await recipients();
+  await recipientCol.deleteMany({ campaignId: _id });
+  const result = await col.deleteOne({ _id });
+  return result.deletedCount === 1;
+}

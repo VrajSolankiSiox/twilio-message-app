@@ -1,8 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { usePathname, useRouter } from "next/navigation";
 import ConversationList from "@/components/ConversationList";
 import InboxFilters from "@/components/messages/InboxFilters";
+import MessageNotificationControls from "@/components/messages/MessageNotificationControls";
 import LiveCallBar from "@/components/LiveCallBar";
 import { useVoiceCall } from "@/components/VoiceCallProvider";
 import { useIsMobile } from "@/hooks/useIsMobile";
@@ -10,16 +12,29 @@ import { highlightStopWithOtherReply } from "@/lib/filters";
 import { formatOutboundMessageStatus } from "@/lib/message-status";
 import { isStopMessage } from "@/lib/stop";
 import type { ChatMessage, Conversation } from "@/lib/messages";
-import { conversationLabel } from "@/lib/messages";
+import { conversationLabel, sortConversations } from "@/lib/messages";
 import {
   CONVERSATION_LIST_PAGE_SIZE,
   MESSAGE_THREAD_PAGE_SIZE,
+  MESSAGES_POLL_INTERVAL_HIDDEN_MS,
+  MESSAGES_POLL_INTERVAL_MS,
 } from "@/lib/messaging";
-import { formatPhoneDisplay, normalizePhone } from "@/lib/phone";
+import {
+  formatPhoneDisplay,
+  isValidPhoneNumber,
+  normalizePhone,
+} from "@/lib/phone";
 import {
   formatMessageTimestampFull,
   formatRelativeTime,
 } from "@/lib/relative-time";
+import {
+  messageConversationPath,
+  notifyInboundFromConversationUpdates,
+  notifyInboundFromThreadMessages,
+  setNotificationNavigateHandler,
+} from "@/lib/browser-notifications";
+import { normalizeAppPathname } from "@/lib/navigation";
 
 interface CurrentUser {
   id: string;
@@ -41,6 +56,32 @@ function useRelativeTimeClock(intervalMs = 60_000): Date {
     return () => clearInterval(id);
   }, [intervalMs]);
   return now;
+}
+
+const INBOX_CACHE_KEY = "revenelx-inbox-cache-v1";
+
+function readInboxCache(): Conversation[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = sessionStorage.getItem(INBOX_CACHE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as Conversation[];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeInboxCache(conversations: Conversation[]): void {
+  try {
+    const slim = conversations.slice(0, 40).map((c) => ({
+      ...c,
+      messages: [],
+    }));
+    sessionStorage.setItem(INBOX_CACHE_KEY, JSON.stringify(slim));
+  } catch {
+    // ignore quota
+  }
 }
 
 function formatDateDivider(dateStr: string): string {
@@ -75,28 +116,33 @@ function conversationInitials(conv: Conversation): string {
 
 function mergeConversationList(
   prev: Conversation[],
-  incoming: Conversation[]
+  incoming: Conversation[],
+  activePhone?: string | null
 ): Conversation[] {
+  const activeKey = activePhone ? normalizePhone(activePhone) : null;
   const map = new Map(prev.map((c) => [normalizePhone(c.phone), c]));
   for (const conv of incoming) {
     const key = normalizePhone(conv.phone);
     const existing = map.get(key);
     if (existing) {
-      map.set(key, {
+      const merged: Conversation = {
         ...existing,
         ...conv,
         messages: existing.messages,
         hasOlderMessages: existing.hasOlderMessages,
         messageCount: existing.messageCount ?? conv.messageCount,
-      });
+      };
+      if (activeKey && key === activeKey) {
+        merged.unread = false;
+      }
+      map.set(key, merged);
     } else {
-      map.set(key, conv);
+      const next: Conversation =
+        activeKey && key === activeKey ? { ...conv, unread: false } : conv;
+      map.set(key, next);
     }
   }
-  return Array.from(map.values()).sort(
-    (a, b) =>
-      new Date(b.lastMessageAt).getTime() - new Date(a.lastMessageAt).getTime()
-  );
+  return sortConversations(Array.from(map.values()));
 }
 
 function addMessageToConversations(
@@ -113,14 +159,16 @@ function addMessageToConversations(
     const alreadyExists = existing.messages.some((m) => m.sid === message.sid);
     if (alreadyExists) return conversations;
 
-    return conversations
-      .map((c) =>
+    return sortConversations(
+      conversations.map((c) =>
         normalizePhone(c.phone) === normalizedContact
           ? {
               ...c,
               messages: [...c.messages, message],
               lastMessage: message.body || "(media)",
               lastMessageAt: message.dateCreated,
+              lastMessageDirection: message.direction,
+              unread: message.direction === "inbound",
               isBlank: false,
               isStop:
                 c.isStop ||
@@ -132,20 +180,18 @@ function addMessageToConversations(
             }
           : c
       )
-      .sort(
-        (a, b) =>
-          new Date(b.lastMessageAt).getTime() -
-          new Date(a.lastMessageAt).getTime()
-      );
+    );
   }
 
-  return [
+  return sortConversations([
     {
       phone: normalizedContact,
       contactName: null,
       messages: [message],
       lastMessage: message.body || "(media)",
       lastMessageAt: message.dateCreated,
+      lastMessageDirection: message.direction,
+      unread: message.direction === "inbound",
       assignedToUserId: null,
       assignedToName: null,
       assignedToEmail: null,
@@ -157,10 +203,12 @@ function addMessageToConversations(
       closedAt: null,
     },
     ...conversations,
-  ];
+  ]);
 }
 
 export default function ChatApp() {
+  const router = useRouter();
+  const pathname = usePathname();
   const relativeNow = useRelativeTimeClock();
   const voice = useVoiceCall();
   const isMobile = useIsMobile();
@@ -188,6 +236,37 @@ export default function ChatApp() {
   const shouldAutoScrollRef = useRef(true);
   const prevMessageCountRef = useRef(0);
   const loadingOlderRef = useRef(false);
+  const selectedPhoneRef = useRef<string | null>(null);
+  selectedPhoneRef.current = selectedPhone;
+  const inboxNotificationsReadyRef = useRef(false);
+  const notifiedInboundKeysRef = useRef(new Set<string>());
+  const inboxCacheReadyRef = useRef(false);
+
+  useLayoutEffect(() => {
+    const cached = readInboxCache();
+    if (cached.length === 0) return;
+    inboxCacheReadyRef.current = true;
+    setConversations(cached);
+    setLoading(false);
+    setConversationTotal(cached.length);
+  }, []);
+
+  const getNotificationContext = useCallback(
+    () => ({
+      pathname,
+      selectedPhone: selectedPhoneRef.current,
+      documentHidden: document.hidden,
+    }),
+    [pathname]
+  );
+
+  useEffect(() => {
+    setNotificationNavigateHandler((path) => {
+      router.push(path);
+      window.focus();
+    });
+    return () => setNotificationNavigateHandler(null);
+  }, [router]);
 
   useEffect(() => {
     voice.initialize();
@@ -236,6 +315,53 @@ export default function ChatApp() {
     });
   }, []);
 
+  const markConversationAsRead = useCallback(
+    async (phone: string, readAt?: string) => {
+      const normalized = normalizePhone(phone);
+      setConversations((prev) =>
+        sortConversations(
+          prev.map((c) =>
+            normalizePhone(c.phone) === normalized ? { ...c, unread: false } : c
+          )
+        )
+      );
+
+      try {
+        await fetch("/api/twilio/messages/read", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            phone: normalized,
+            ...(readAt ? { readAt } : {}),
+          }),
+        });
+      } catch {
+        // The next inbox poll will reconcile read state.
+      }
+    },
+    []
+  );
+
+  const syncConversationUrl = useCallback(
+    (phone: string) => {
+      if (normalizeAppPathname(pathname) !== "/messages") return;
+      router.replace(messageConversationPath(phone), { scroll: false });
+    },
+    [pathname, router]
+  );
+
+  useEffect(() => {
+    if (normalizeAppPathname(pathname) !== "/messages") return;
+    const raw = new URLSearchParams(window.location.search).get("phone");
+    if (!raw) return;
+    const phone = normalizePhone(raw);
+    setSelectedPhone((prev) =>
+      prev && normalizePhone(prev) === phone ? prev : phone
+    );
+    if (isMobile) setMobilePane("chat");
+    void markConversationAsRead(phone);
+  }, [pathname, isMobile, markConversationAsRead]);
+
   const loadThread = useCallback(
     async (
       phone: string,
@@ -266,6 +392,10 @@ export default function ChatApp() {
 
         setError(null);
         const normalized = normalizePhone(phone);
+        let latestReadAt: string | undefined;
+        let hadNewMessages = false;
+        let threadNotifyConversation: Conversation | undefined;
+        let threadNotifyIncoming: ChatMessage[] = [];
         setConversations((prev) =>
           prev.map((c) => {
             if (normalizePhone(c.phone) !== normalized) return c;
@@ -273,6 +403,11 @@ export default function ChatApp() {
             const incoming = (data.messages as ChatMessage[]).filter(
               (m) => !existingIds.has(m.sid)
             );
+            if (incoming.length > 0 && options?.appendNew) {
+              hadNewMessages = true;
+              threadNotifyConversation = c;
+              threadNotifyIncoming = incoming;
+            }
             let messages: ChatMessage[];
             if (options?.prepend) {
               messages = [...incoming, ...c.messages];
@@ -291,15 +426,51 @@ export default function ChatApp() {
                 return Number.isFinite(mediaCount) && mediaCount > 0;
               });
 
+            const latest = messages[messages.length - 1];
+            if (latest && !options?.prepend) {
+              latestReadAt = latest.dateCreated;
+            }
+
             return {
               ...c,
               messages,
               messageCount: data.totalCount,
               hasOlderMessages: data.hasMore,
               hasNonStopInbound,
+              ...(latest && {
+                lastMessage: latest.body || "(media)",
+                lastMessageAt: latest.dateCreated,
+                lastMessageDirection: latest.direction,
+                unread: false,
+              }),
             };
           })
         );
+
+        if (
+          options?.appendNew &&
+          inboxNotificationsReadyRef.current &&
+          threadNotifyIncoming.length > 0
+        ) {
+          notifyInboundFromThreadMessages(
+            threadNotifyConversation,
+            threadNotifyIncoming,
+            getNotificationContext(),
+            notifiedInboundKeysRef.current
+          );
+        }
+
+        if (!options?.prepend && latestReadAt) {
+          void markConversationAsRead(phone, latestReadAt);
+        }
+
+        if (
+          options?.appendNew &&
+          hadNewMessages &&
+          shouldAutoScrollRef.current
+        ) {
+          requestAnimationFrame(() => scrollToBottom());
+        }
 
         if (options?.preserveScrollHeight != null) {
           const el = messagesContainerRef.current;
@@ -315,7 +486,7 @@ export default function ChatApp() {
         if (!options?.silent) setLoadingThread(false);
       }
     },
-    []
+    [getNotificationContext, markConversationAsRead, scrollToBottom]
   );
 
   const handleMessagesScroll = () => {
@@ -396,11 +567,32 @@ export default function ChatApp() {
             return next;
           });
         } else if (silent) {
-          setConversations((prev) =>
-            mergeConversationList(prev, data.conversations as Conversation[])
-          );
+          setConversations((prev) => {
+            const next = mergeConversationList(
+              prev,
+              data.conversations as Conversation[],
+              selectedPhoneRef.current
+            );
+            if (inboxNotificationsReadyRef.current) {
+              notifyInboundFromConversationUpdates(
+                prev,
+                next,
+                getNotificationContext(),
+                notifiedInboundKeysRef.current
+              );
+            }
+            return next;
+          });
         } else {
           setConversations(data.conversations);
+        }
+
+        if (!append && page === 1 && !showClosed && !showStop && !showBlank) {
+          writeInboxCache(data.conversations as Conversation[]);
+        }
+
+        if (!append) {
+          inboxNotificationsReadyRef.current = true;
         }
 
         if (data.user) setCurrentUser(data.user);
@@ -427,7 +619,7 @@ export default function ChatApp() {
         setLoadingMoreList(false);
       }
     },
-    [showClosed, showStop, showBlank]
+    [getNotificationContext, showClosed, showStop, showBlank]
   );
 
   const syncAfterSend = useCallback(async () => {
@@ -440,17 +632,51 @@ export default function ChatApp() {
 
   useEffect(() => {
     setListPage(1);
-    void fetchConversations({ page: 1 });
+    void fetchConversations({
+      page: 1,
+      silent: inboxCacheReadyRef.current,
+    });
   }, [fetchConversations]);
 
   useEffect(() => {
-    const interval = setInterval(() => {
+    let intervalId: ReturnType<typeof window.setInterval> | null = null;
+
+    const pollIntervalMs = () =>
+      document.hidden
+        ? MESSAGES_POLL_INTERVAL_HIDDEN_MS
+        : MESSAGES_POLL_INTERVAL_MS;
+
+    const poll = () => {
       void fetchConversations({ page: 1, silent: true });
       if (selectedPhone) {
         void loadThread(selectedPhone, { appendNew: true, silent: true });
       }
-    }, 5000);
-    return () => clearInterval(interval);
+    };
+
+    const restartInterval = () => {
+      if (intervalId !== null) {
+        window.clearInterval(intervalId);
+      }
+      intervalId = window.setInterval(poll, pollIntervalMs());
+    };
+
+    restartInterval();
+
+    const onVisibilityChange = () => {
+      if (!document.hidden) {
+        poll();
+      }
+      restartInterval();
+    };
+
+    document.addEventListener("visibilitychange", onVisibilityChange);
+
+    return () => {
+      if (intervalId !== null) {
+        window.clearInterval(intervalId);
+      }
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
   }, [fetchConversations, loadThread, selectedPhone]);
 
   useEffect(() => {
@@ -471,6 +697,8 @@ export default function ChatApp() {
 
   const handleSelectConversation = (phone: string) => {
     setSelectedPhone(phone);
+    void markConversationAsRead(phone);
+    syncConversationUrl(phone);
     if (isMobile) setMobilePane("chat");
   };
 
@@ -691,14 +919,17 @@ export default function ChatApp() {
                   : ""}
               </p>
             </div>
-            <InboxFilters
-              showClosed={showClosed}
-              showStop={showStop}
-              showBlank={showBlank}
-              onShowClosedChange={setShowClosed}
-              onShowStopChange={setShowStop}
-              onShowBlankChange={setShowBlank}
-            />
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <InboxFilters
+                showClosed={showClosed}
+                showStop={showStop}
+                showBlank={showBlank}
+                onShowClosedChange={setShowClosed}
+                onShowStopChange={setShowStop}
+                onShowBlankChange={setShowBlank}
+              />
+              <MessageNotificationControls variant="chip" />
+            </div>
           </div>
 
           <ConversationList
@@ -784,8 +1015,12 @@ export default function ChatApp() {
                           : "text-zinc-400"
                       }`}
                     >
-                      {formatPhoneDisplay(selectedConversation.phone)}
-                      <span className="text-zinc-300"> · </span>
+                      {isValidPhoneNumber(selectedConversation.phone) ? (
+                        <>
+                          {formatPhoneDisplay(selectedConversation.phone)}
+                          <span className="text-zinc-300"> · </span>
+                        </>
+                      ) : null}
                       {selectedConversation.messageCount ??
                         selectedConversation.messages.length}{" "}
                       msg

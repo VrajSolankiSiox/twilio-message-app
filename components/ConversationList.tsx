@@ -7,7 +7,11 @@ import {
   type Conversation,
 } from "@/lib/messages";
 import { highlightStopWithOtherReply } from "@/lib/filters";
-import { formatPhoneDisplay, normalizePhone } from "@/lib/phone";
+import {
+  formatPhoneDisplay,
+  isValidPhoneNumber,
+  normalizePhone,
+} from "@/lib/phone";
 
 interface IndicatorStyle {
   top: number;
@@ -191,6 +195,7 @@ export default function ConversationList({
         const phoneKey = normalizePhone(conv.phone);
         const isHighlighted = highlightedPhone === phoneKey;
         const stopWithOtherReply = highlightStopWithOtherReply(conv, showStopFilter);
+        const isUnread = Boolean(conv.unread) && !isHighlighted;
 
         return (
           <button
@@ -201,16 +206,28 @@ export default function ConversationList({
               else delete itemRefs.current[phoneKey];
             }}
             onClick={() => onSelect(conv.phone)}
-            className="relative z-[2] flex w-full items-start gap-3 border-b border-border/40 px-4 py-3.5 text-left"
+            className={`relative z-[2] flex w-full items-start gap-3 border-b px-4 py-3.5 text-left transition-colors duration-200 ${
+              isUnread
+                ? "border-brand/25 bg-brand-light/70 hover:bg-brand-light"
+                : "border-border/40 hover:bg-brand-muted/20"
+            }`}
           >
             <div
-              className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-sm font-semibold transition-[box-shadow,background-color,color] duration-300 ${
+              className={`relative flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-sm font-semibold transition-[box-shadow,background-color,color] duration-300 ${
                 isHighlighted
                   ? "bg-brand text-white shadow-sm shadow-brand/20"
-                  : "bg-brand-muted/80 text-brand"
+                  : isUnread
+                    ? "bg-brand text-white shadow-sm shadow-brand/25"
+                    : "bg-brand-muted/80 text-brand"
               }`}
             >
               {conversationInitials(conv)}
+              {isUnread && (
+                <span
+                  className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full border-2 border-white bg-emerald-500"
+                  aria-hidden
+                />
+              )}
             </div>
             <div className="min-w-0 flex-1">
               <div
@@ -225,26 +242,38 @@ export default function ConversationList({
                     className={`truncate text-sm transition-[font-weight,color] duration-200 ${
                       stopWithOtherReply
                         ? "font-semibold text-emerald-900"
-                        : isHighlighted
+                        : isUnread
                           ? "font-semibold text-foreground"
-                          : "font-medium text-zinc-700"
+                          : isHighlighted
+                            ? "font-semibold text-foreground"
+                            : "font-medium text-zinc-700"
                     }`}
                   >
                     {conversationLabel(conv)}
+                    {isUnread && (
+                      <span className="ml-1.5 inline-flex align-middle rounded-full bg-brand px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-white">
+                        New
+                      </span>
+                    )}
                   </p>
                   <time
                     dateTime={conv.lastMessageAt}
                     title={
                       formatTimeTitle?.(conv.lastMessageAt) ?? conv.lastMessageAt
                     }
-                    className={`shrink-0 cursor-default text-[10px] ${
-                      stopWithOtherReply ? "text-emerald-700/80" : "text-zinc-400"
+                    className={`shrink-0 cursor-default text-[10px] font-medium ${
+                      stopWithOtherReply
+                        ? "text-emerald-700/80"
+                        : isUnread
+                          ? "text-brand"
+                          : "text-zinc-400"
                     }`}
                   >
                     {formatTime(conv.lastMessageAt)}
                   </time>
                 </div>
-                {conv.contactName?.trim() ? (
+                {conv.contactName?.trim() &&
+                isValidPhoneNumber(conv.phone) ? (
                   <p
                     className={`mt-0.5 truncate font-mono text-[11px] transition-colors duration-200 ${
                       stopWithOtherReply
@@ -260,7 +289,11 @@ export default function ConversationList({
               </div>
               <p
                 className={`mt-0.5 truncate text-xs transition-colors duration-200 ${
-                  isHighlighted ? "text-zinc-600" : "text-zinc-500"
+                  isUnread
+                    ? "font-medium text-foreground"
+                    : isHighlighted
+                      ? "text-zinc-600"
+                      : "text-zinc-500"
                 }`}
               >
                 {conv.lastMessage}

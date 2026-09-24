@@ -1,9 +1,18 @@
+import { randomUUID } from "crypto";
 import { getDb } from "@/lib/mongodb";
-import { normalizePhone } from "@/lib/phone";
+import { isValidPhoneNumber, normalizePhone } from "@/lib/phone";
 
 export interface ConversationAssignment {
+  /** Stable chat id (not the phone number). */
+  id?: string;
   phone: string;
   contactName: string | null;
+  lastMessageAt?: Date;
+  lastBody?: string;
+  lastDirection?: "inbound" | "outbound";
+  hasInbound?: boolean;
+  hasOutbound?: boolean;
+  messageCount?: number;
   assignedToUserId: string | null;
   assignedToName: string | null;
   assignedToEmail: string | null;
@@ -21,10 +30,19 @@ let indexesEnsured = false;
 async function ensureIndexes() {
   if (indexesEnsured) return;
   const db = await getDb();
-  await db
-    .collection<ConversationAssignment>("conversations")
-    .createIndex({ phone: 1 }, { unique: true });
+  const col = db.collection<ConversationAssignment>("conversations");
+  await col.createIndex({ phone: 1 }, { unique: true });
+  await col.createIndex({ id: 1 }, { unique: true, sparse: true });
+  await col.createIndex({ lastMessageAt: -1 });
   indexesEnsured = true;
+}
+
+export async function ensureConversationIndexes(): Promise<void> {
+  await ensureIndexes();
+}
+
+export function newConversationId(): string {
+  return randomUUID();
 }
 
 export async function getAssignment(
@@ -45,13 +63,16 @@ export async function getAllAssignments(): Promise<ConversationAssignment[]> {
 
 export async function ensureConversationExists(phone: string): Promise<void> {
   await ensureIndexes();
-  const db = await getDb();
   const normalized = normalizePhone(phone);
+  if (!isValidPhoneNumber(normalized)) return;
+
+  const db = await getDb();
 
   await db.collection<ConversationAssignment>("conversations").updateOne(
     { phone: normalized },
     {
       $setOnInsert: {
+        id: newConversationId(),
         phone: normalized,
         contactName: null,
         assignedToUserId: null,
@@ -211,6 +232,8 @@ export async function upsertContactNames(
       if (!name) return null;
 
       const phone = normalizePhone(contact.phone);
+      if (!isValidPhoneNumber(phone)) return null;
+
       const now = new Date();
 
       return {
@@ -219,6 +242,7 @@ export async function upsertContactNames(
           update: {
             $set: { contactName: name, updatedAt: now },
             $setOnInsert: {
+              id: newConversationId(),
               phone,
               assignedToUserId: null,
               assignedToName: null,

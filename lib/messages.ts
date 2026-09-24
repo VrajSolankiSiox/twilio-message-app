@@ -1,13 +1,15 @@
-import { formatPhoneDisplay, normalizePhone } from "./phone";
+import { formatPhoneDisplay, isValidPhoneNumber, normalizePhone } from "./phone";
 import { isStopMessage } from "./stop";
 
 export interface ContactConversationStats {
   phone: string;
   lastMessageAt: Date;
   lastBody: string;
+  lastMessageDirection: "inbound" | "outbound";
   hasInbound: boolean;
   hasOutbound: boolean;
   hasStopInbound: boolean;
+  messageCount: number;
 }
 
 export interface ChatMessage {
@@ -22,11 +24,14 @@ export interface ChatMessage {
 }
 
 export interface Conversation {
+  id?: string;
   phone: string;
   contactName: string | null;
   messages: ChatMessage[];
   lastMessage: string;
   lastMessageAt: string;
+  lastMessageDirection?: "inbound" | "outbound";
+  unread?: boolean;
   assignedToUserId: string | null;
   assignedToName: string | null;
   assignedToEmail: string | null;
@@ -42,7 +47,12 @@ export interface Conversation {
 
 export function conversationLabel(conversation: Conversation): string {
   const name = conversation.contactName?.trim();
-  return name || formatPhoneDisplay(conversation.phone);
+  if (name) return name;
+  const display = formatPhoneDisplay(conversation.phone);
+  if (display) return display;
+  return isValidPhoneNumber(conversation.phone)
+    ? conversation.phone
+    : "Unknown contact";
 }
 
 export function conversationInitials(conversation: Conversation): string {
@@ -69,16 +79,40 @@ type AssignmentRow = {
   hasNonStopInbound?: boolean;
 };
 
+export function isConversationUnread(
+  conversation: Pick<
+    Conversation,
+    "lastMessageAt" | "lastMessageDirection" | "unread"
+  >,
+  lastReadAt: Date | null | undefined
+): boolean {
+  if (conversation.unread === false) return false;
+  if (conversation.lastMessageDirection !== "inbound") return false;
+  if (!lastReadAt) return true;
+  return new Date(conversation.lastMessageAt).getTime() > lastReadAt.getTime();
+}
+
+export function sortConversations(conversations: Conversation[]): Conversation[] {
+  return [...conversations].sort((a, b) => {
+    const unreadA = a.unread ? 1 : 0;
+    const unreadB = b.unread ? 1 : 0;
+    if (unreadA !== unreadB) return unreadB - unreadA;
+    return (
+      new Date(b.lastMessageAt).getTime() - new Date(a.lastMessageAt).getTime()
+    );
+  });
+}
+
 export function buildConversationsFromStats(
   stats: ContactConversationStats[],
-  assignments: AssignmentRow[]
+  assignments: AssignmentRow[],
+  readsByPhone?: Map<string, Date>
 ): Conversation[] {
   const assignmentMap = new Map(
     assignments.map((a) => [normalizePhone(a.phone), a])
   );
 
-  return stats
-    .map((row) => {
+  const conversations = stats.map((row) => {
       const phone = normalizePhone(row.phone);
       const assignment = assignmentMap.get(phone);
       const isStop = Boolean(
@@ -87,12 +121,25 @@ export function buildConversationsFromStats(
       const hasNonStopInbound = Boolean(assignment?.hasNonStopInbound);
       const isBlank = row.hasOutbound && !row.hasInbound;
 
+      const lastMessageAt = row.lastMessageAt.toISOString();
+      const lastMessageDirection = row.lastMessageDirection;
+      const lastReadAt = readsByPhone?.get(phone);
+      const unread = isConversationUnread(
+        {
+          lastMessageAt,
+          lastMessageDirection,
+        },
+        lastReadAt
+      );
+
       return {
         phone,
         contactName: assignment?.contactName?.trim() || null,
         messages: [],
         lastMessage: row.lastBody || "(media)",
-        lastMessageAt: row.lastMessageAt.toISOString(),
+        lastMessageAt,
+        lastMessageDirection,
+        unread,
         assignedToUserId: assignment?.assignedToUserId ?? null,
         assignedToName: assignment?.assignedToName ?? null,
         assignedToEmail: assignment?.assignedToEmail ?? null,
@@ -103,11 +150,66 @@ export function buildConversationsFromStats(
         isClosed: Boolean(assignment?.closedAt),
         closedAt: assignment?.closedAt?.toISOString() ?? null,
       };
-    })
-    .sort(
-      (a, b) =>
-        new Date(b.lastMessageAt).getTime() - new Date(a.lastMessageAt).getTime()
+  });
+
+  return sortConversations(conversations);
+}
+
+export function buildConversationsFromStored(
+  rows: Array<{
+    id?: string;
+    phone: string;
+    contactName?: string | null;
+    assignedToUserId: string | null;
+    assignedToName: string | null;
+    assignedToEmail: string | null;
+    assignedAt: Date | null;
+    closedAt?: Date | null;
+    hasStopInbound?: boolean;
+    hasNonStopInbound?: boolean;
+    lastMessageAt?: Date;
+    lastBody?: string;
+    lastDirection?: "inbound" | "outbound";
+    hasInbound?: boolean;
+    hasOutbound?: boolean;
+    messageCount?: number;
+  }>,
+  readsByPhone?: Map<string, Date>
+): Conversation[] {
+  const conversations = rows.map((row) => {
+    const phone = normalizePhone(row.phone);
+    const lastMessageAt = (row.lastMessageAt ?? new Date(0)).toISOString();
+    const lastMessageDirection =
+      row.lastDirection === "inbound" ? "inbound" : "outbound";
+    const lastReadAt = readsByPhone?.get(phone);
+    const unread = isConversationUnread(
+      { lastMessageAt, lastMessageDirection },
+      lastReadAt
     );
+
+    return {
+      id: row.id,
+      phone,
+      contactName: row.contactName?.trim() || null,
+      messages: [],
+      lastMessage: row.lastBody || "(media)",
+      lastMessageAt,
+      lastMessageDirection,
+      unread,
+      assignedToUserId: row.assignedToUserId ?? null,
+      assignedToName: row.assignedToName ?? null,
+      assignedToEmail: row.assignedToEmail ?? null,
+      assignedAt: row.assignedAt?.toISOString() ?? null,
+      isStop: Boolean(row.hasStopInbound),
+      isBlank: Boolean(row.hasOutbound) && !row.hasInbound,
+      hasNonStopInbound: Boolean(row.hasNonStopInbound),
+      isClosed: Boolean(row.closedAt),
+      closedAt: row.closedAt?.toISOString() ?? null,
+      messageCount: row.messageCount,
+    };
+  });
+
+  return sortConversations(conversations);
 }
 
 export function buildConversations(

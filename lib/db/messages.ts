@@ -3,7 +3,7 @@ import type {
   ChatMessage,
   ContactConversationStats,
 } from "@/lib/messages";
-import { normalizePhone } from "@/lib/phone";
+import { isValidPhoneNumber, normalizePhone } from "@/lib/phone";
 import { isStopMessage } from "@/lib/stop";
 
 export interface StoredMessage {
@@ -18,6 +18,7 @@ export interface StoredMessage {
   dateCreated: Date;
   createdAt: Date;
   contactPhone?: string;
+  conversationId?: string;
 }
 
 let indexesEnsured = false;
@@ -66,6 +67,11 @@ export async function saveMessage(
   const contactPhone = normalizePhone(
     message.direction === "inbound" ? message.from : message.to
   );
+  if (!isValidPhoneNumber(contactPhone)) {
+    throw new Error(
+      `Invalid contact phone for message ${message.sid}: ${message.from} → ${message.to}`
+    );
+  }
   await ensureConversationExists(contactPhone);
 
   if (message.direction === "inbound") {
@@ -86,6 +92,10 @@ export async function saveMessage(
     }
   }
 
+  const { getConversationIdForPhone, recordMessageOnConversation } =
+    await import("@/lib/db/inbox");
+  const conversationId = await getConversationIdForPhone(contactPhone);
+
   if (Object.keys(convUpdates).length > 0) {
     await db.collection("conversations").updateOne(
       { phone: contactPhone },
@@ -95,10 +105,10 @@ export async function saveMessage(
 
   const { contactPhone: _ignored, ...messageForInsert } = message;
 
-  await db.collection<StoredMessage>("messages").updateOne(
+  const write = await db.collection<StoredMessage>("messages").updateOne(
     { sid: message.sid },
     {
-      $set: { contactPhone },
+      $set: { contactPhone, conversationId },
       $setOnInsert: {
         ...messageForInsert,
         createdAt: new Date(),
@@ -106,6 +116,11 @@ export async function saveMessage(
     },
     { upsert: true }
   );
+
+  await recordMessageOnConversation(message, {
+    inserted: write.upsertedCount > 0,
+    conversationId,
+  });
 }
 
 export async function getAllMessages(): Promise<ChatMessage[]> {
@@ -133,10 +148,13 @@ export async function aggregateContactConversationStats(): Promise<
       _id: string;
       lastMessageAt: Date;
       lastBody: string;
+      lastDirection: string;
       hasInbound: number;
       hasOutbound: number;
       hasStopInbound: number;
-    }>([
+      messageCount: number;
+    }>(
+      [
       {
         $addFields: {
           contactPhone: {
@@ -159,6 +177,7 @@ export async function aggregateContactConversationStats(): Promise<
           _id: "$contactPhone",
           lastMessageAt: { $first: "$dateCreated" },
           lastBody: { $first: "$body" },
+          lastDirection: { $first: "$direction" },
           hasInbound: {
             $max: {
               $cond: [{ $eq: ["$direction", "inbound"] }, 1, 0],
@@ -191,19 +210,29 @@ export async function aggregateContactConversationStats(): Promise<
               ],
             },
           },
+          messageCount: { $sum: 1 },
         },
       },
-    ])
+    ],
+    { allowDiskUse: true }
+    )
     .toArray();
 
-  return rows.map((row) => ({
-    phone: normalizePhone(row._id),
-    lastMessageAt: row.lastMessageAt,
-    lastBody: row.lastBody ?? "",
-    hasInbound: row.hasInbound === 1,
-    hasOutbound: row.hasOutbound === 1,
-    hasStopInbound: row.hasStopInbound === 1,
-  }));
+  return rows
+    .filter((row) => isValidPhoneNumber(String(row._id ?? "")))
+    .map((row) => ({
+      phone: normalizePhone(row._id),
+      lastMessageAt: row.lastMessageAt,
+      lastBody: row.lastBody ?? "",
+      lastMessageDirection:
+        row.lastDirection === "inbound" || row.lastDirection === "outbound"
+          ? row.lastDirection
+          : "outbound",
+      hasInbound: row.hasInbound === 1,
+      hasOutbound: row.hasOutbound === 1,
+      hasStopInbound: row.hasStopInbound === 1,
+      messageCount: row.messageCount ?? 0,
+    }));
 }
 
 export async function getMessagesForContact(
@@ -219,32 +248,13 @@ export async function getMessagesForContact(
   const contactPhone = normalizePhone(phone);
   const limit = Math.max(1, options.limit);
 
-  const contactFilter = {
-    $or: [
-      { contactPhone },
-      {
-        contactPhone: { $exists: false },
-        direction: "inbound" as const,
-        from: contactPhone,
-      },
-      {
-        contactPhone: { $exists: false },
-        direction: "outbound" as const,
-        to: contactPhone,
-      },
-    ],
-  };
+  const filter: Record<string, unknown> = { contactPhone };
+  if (options.before) {
+    filter.dateCreated = { $lt: options.before };
+  }
 
-  const filter = options.before
-    ? { ...contactFilter, dateCreated: { $lt: options.before } }
-    : contactFilter;
-
-  const totalCount = await db
-    .collection<StoredMessage>("messages")
-    .countDocuments(contactFilter);
-
-  const fetched = await db
-    .collection<StoredMessage>("messages")
+  const col = db.collection<StoredMessage>("messages");
+  const fetched = await col
     .find(filter)
     .sort({ dateCreated: -1 })
     .limit(limit + 1)
@@ -253,6 +263,14 @@ export async function getMessagesForContact(
   const hasMore = fetched.length > limit;
   const slice = hasMore ? fetched.slice(0, limit) : fetched;
   const messages = slice.reverse().map(toChatMessage);
+
+  let totalCount = messages.length;
+  if (hasMore || options.before) {
+    const summary = await db
+      .collection<{ messageCount?: number }>("conversations")
+      .findOne({ phone: contactPhone }, { projection: { messageCount: 1 } });
+    totalCount = summary?.messageCount ?? messages.length;
+  }
 
   return { messages, hasMore, totalCount };
 }

@@ -30,6 +30,28 @@ import { formatPhoneDisplay } from "@/lib/phone";
 const inputClass =
   "w-full rounded-xl border border-border bg-white px-4 py-2.5 text-sm text-foreground placeholder:text-zinc-400 focus:border-brand focus:ring-2 focus:ring-brand/20";
 
+const deleteCampaignButtonClass =
+  "inline-flex shrink-0 items-center justify-center gap-1.5 rounded-xl border-2 border-red-400 bg-red-600 px-3.5 py-2 text-xs font-semibold text-white shadow-sm transition-colors hover:border-red-500 hover:bg-red-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-500 disabled:cursor-not-allowed disabled:border-red-200 disabled:bg-red-200 disabled:text-red-50";
+
+function TrashIcon({ className = "h-4 w-4" }: { className?: string }) {
+  return (
+    <svg
+      className={className}
+      fill="none"
+      viewBox="0 0 24 24"
+      stroke="currentColor"
+      aria-hidden
+    >
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth={2}
+        d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+      />
+    </svg>
+  );
+}
+
 type ActivityFilter = "all" | "sent" | "failed";
 
 function sleep(ms: number) {
@@ -655,6 +677,57 @@ export default function Campaigns() {
     }
   };
 
+  const handleDelete = async (id: string, campaignName: string) => {
+    const sendingNow =
+      runningIdRef.current === id ||
+      campaigns.find((c) => c.id === id)?.status === "sending" ||
+      (campaign?.id === id && campaign.status === "sending");
+
+    if (sendingNow) {
+      setError("Pause or stop the campaign before deleting it.");
+      return;
+    }
+
+    if (
+      !window.confirm(
+        `Delete "${campaignName}"? This removes the campaign and its delivery history. This cannot be undone.`
+      )
+    ) {
+      return;
+    }
+
+    setActionBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const res = await fetch(`/api/campaigns/${id}`, { method: "DELETE" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(data.error || "Could not delete the campaign");
+        return;
+      }
+
+      setCampaigns((prev) => prev.filter((item) => item.id !== id));
+      setListTotal((total) => Math.max(0, total - 1));
+
+      if (detailIdRef.current === id) {
+        detailIdRef.current = null;
+        campaignRef.current = null;
+        setCampaign(null);
+        router.push(CAMPAIGN_ROUTES.list);
+      }
+
+      setNotice(`Deleted "${campaignName}".`);
+      if (view === "list") {
+        void loadList(listPage);
+      }
+    } catch {
+      setError("Network error while deleting the campaign.");
+    } finally {
+      setActionBusy(false);
+    }
+  };
+
   const handleRetry = async (id: string) => {
     setActionBusy(true);
     setError(null);
@@ -890,12 +963,11 @@ export default function Campaigns() {
 
           {!listLoading && listTotal > 0 && (
             <section className="overflow-hidden rounded-2xl border border-border bg-surface shadow-sm">
-              <div className="hidden grid-cols-[1fr_7rem_5.5rem_4.5rem_2rem] gap-3 border-b border-border bg-brand-muted/40 px-5 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-500 sm:grid">
+              <div className="hidden grid-cols-[1fr_7rem_5.5rem_4.5rem] gap-3 border-b border-border bg-brand-muted/40 px-5 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-500 sm:grid sm:pr-[7.5rem]">
                 <span>Campaign</span>
                 <span>Progress</span>
                 <span className="text-right">Sent</span>
                 <span className="text-right">Failed</span>
-                <span aria-hidden />
               </div>
               <ul className="divide-y divide-border">
                 {campaigns.map((item) => {
@@ -908,7 +980,7 @@ export default function Campaigns() {
                         <button
                           type="button"
                           onClick={() => goToCampaign(item.id)}
-                          className="grid min-w-0 flex-1 gap-3 px-4 py-4 text-left transition-colors hover:bg-brand-muted/25 sm:grid-cols-[1fr_7rem_5.5rem_4.5rem_2rem] sm:items-center sm:gap-3 sm:px-5"
+                          className="grid min-w-0 flex-1 gap-3 px-4 py-4 text-left transition-colors hover:bg-brand-muted/25 sm:grid-cols-[1fr_7rem_5.5rem_4.5rem] sm:items-center sm:gap-3 sm:px-5"
                         >
                           <div className="min-w-0">
                             <div className="flex flex-wrap items-center gap-2">
@@ -944,14 +1016,6 @@ export default function Campaigns() {
                           >
                             {item.failed}
                           </p>
-                          <span
-                            className="hidden items-center justify-end text-zinc-300 group-hover:text-brand sm:flex"
-                            aria-hidden
-                          >
-                            <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                            </svg>
-                          </span>
                           <div className="flex gap-4 border-t border-border pt-3 sm:hidden">
                             <Count label="Sent" value={item.sent} tone="good" />
                             <Count label="Failed" value={item.failed} tone={item.failed > 0 ? "bad" : "muted"} />
@@ -961,6 +1025,28 @@ export default function Campaigns() {
                             <ProgressBar value={progress} />
                           </div>
                         </button>
+                        <div className="hidden shrink-0 items-center border-l border-border bg-surface px-4 sm:flex">
+                          <button
+                            type="button"
+                            disabled={actionBusy || item.status === "sending"}
+                            onClick={() => void handleDelete(item.id, item.name)}
+                            className={deleteCampaignButtonClass}
+                          >
+                            <TrashIcon />
+                            Delete
+                          </button>
+                        </div>
+                        <div className="border-t border-border bg-red-50/40 px-4 py-3 sm:hidden">
+                          <button
+                            type="button"
+                            disabled={actionBusy || item.status === "sending"}
+                            onClick={() => void handleDelete(item.id, item.name)}
+                            className={`${deleteCampaignButtonClass} w-full`}
+                          >
+                            <TrashIcon />
+                            Delete campaign
+                          </button>
+                        </div>
                         {showActions && (
                           <div className="flex shrink-0 gap-2 border-t border-border bg-brand-muted/20 px-4 py-3 sm:w-44 sm:flex-col sm:justify-center sm:border-l sm:border-t-0 sm:px-3">
                             {item.status === "sending" ? (
@@ -1217,6 +1303,7 @@ export default function Campaigns() {
               onSkipAlreadySentChange={setSkipAlreadySent}
               onResume={() => void runLoop(campaign.id, true, skipAlreadySent, true)}
               onRetry={() => void handleRetry(campaign.id)}
+              onDelete={() => void handleDelete(campaign.id, campaign.name)}
             />
           )}
 
@@ -1277,6 +1364,7 @@ function CampaignDetail({
   onPause,
   onResume,
   onRetry,
+  onDelete,
   skipAlreadySent,
   onSkipAlreadySentChange,
 }: {
@@ -1301,6 +1389,7 @@ function CampaignDetail({
   onPause: () => void;
   onResume: () => void;
   onRetry: () => void;
+  onDelete: () => void;
   skipAlreadySent: boolean;
   onSkipAlreadySentChange: (checked: boolean) => void;
 }) {
@@ -1468,6 +1557,27 @@ function CampaignDetail({
           <p className="mt-2 text-xs text-zinc-400">
             Pause takes effect after the current batch, up to 5 messages.
           </p>
+        )}
+
+        {!sending && (
+          <div className="mt-6 rounded-xl border border-red-200 bg-red-50/80 px-4 py-4 sm:flex sm:items-center sm:justify-between sm:gap-4">
+            <div className="min-w-0">
+              <p className="text-sm font-semibold text-red-900">Remove campaign</p>
+              <p className="mt-0.5 text-xs text-red-800/80">
+                Permanently deletes this campaign and its delivery history from the
+                dashboard. Sent SMS are not undone.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={onDelete}
+              disabled={actionBusy}
+              className={`${deleteCampaignButtonClass} mt-3 w-full px-5 py-2.5 text-sm sm:mt-0 sm:w-auto`}
+            >
+              <TrashIcon className="h-4 w-4" />
+              Delete campaign
+            </button>
+          </div>
         )}
       </section>
 

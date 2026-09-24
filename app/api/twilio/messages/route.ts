@@ -1,12 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
-import { getAllAssignments } from "@/lib/db/conversations";
-import { aggregateContactConversationStats } from "@/lib/db/messages";
+import { getConversationReadsForUser } from "@/lib/db/conversation-reads";
+import { listStoredConversations } from "@/lib/db/inbox";
 import { applyConversationFilters } from "@/lib/filters";
 import { CONVERSATION_LIST_PAGE_SIZE } from "@/lib/messaging";
 import {
-  buildConversationsFromStats,
+  buildConversationsFromStored,
   canUserViewConversation,
+  sortConversations,
 } from "@/lib/messages";
 
 export async function GET(request: NextRequest) {
@@ -36,22 +37,24 @@ export async function GET(request: NextRequest) {
       50
     );
 
-    const [stats, assignments] = await Promise.all([
-      aggregateContactConversationStats(),
-      getAllAssignments(),
+    const [rows, readsByPhone] = await Promise.all([
+      listStoredConversations(),
+      getConversationReadsForUser(session.userId),
     ]);
 
-    const allConversations = buildConversationsFromStats(stats, assignments);
+    const allConversations = buildConversationsFromStored(rows, readsByPhone);
 
     const accessible = allConversations.filter((conv) =>
       canUserViewConversation(conv, session.userId, session.role)
     );
 
-    const filtered = applyConversationFilters(accessible, {
-      showStop,
-      showBlank,
-      showClosed,
-    });
+    const filtered = sortConversations(
+      applyConversationFilters(accessible, {
+        showStop,
+        showBlank,
+        showClosed,
+      })
+    );
 
     const total = filtered.length;
     const start = (page - 1) * limit;

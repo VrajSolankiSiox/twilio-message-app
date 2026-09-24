@@ -19,6 +19,7 @@ import Campaigns from "@/components/Campaigns";
 import CostDashboard from "@/components/CostDashboard";
 import InvoiceGenerator from "@/components/InvoiceGenerator";
 import AppPageFrame from "@/components/AppPageFrame";
+import MessageNotificationControls from "@/components/messages/MessageNotificationControls";
 import PageLoadingSkeleton from "@/components/PageLoadingSkeleton";
 import UserManagement from "@/components/UserManagement";
 import { APP_TESTING_BADGE } from "@/lib/app-layout";
@@ -171,6 +172,8 @@ export default function Dashboard({ initialUser }: DashboardProps) {
               </button>
             </div>
           </header>
+
+          {user ? <MessageNotificationControls variant="banner" /> : null}
 
           <div className="relative min-h-0 flex-1 overflow-hidden">
             <TabPanel
