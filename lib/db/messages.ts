@@ -93,13 +93,14 @@ export async function saveMessage(
     );
   }
 
+  const { contactPhone: _ignored, ...messageForInsert } = message;
+
   await db.collection<StoredMessage>("messages").updateOne(
     { sid: message.sid },
     {
       $set: { contactPhone },
       $setOnInsert: {
-        ...message,
-        contactPhone,
+        ...messageForInsert,
         createdAt: new Date(),
       },
     },
