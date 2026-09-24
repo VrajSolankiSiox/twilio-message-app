@@ -195,7 +195,7 @@ export default function ConversationList({
         const phoneKey = normalizePhone(conv.phone);
         const isHighlighted = highlightedPhone === phoneKey;
         const stopWithOtherReply = highlightStopWithOtherReply(conv, showStopFilter);
-        const isUnread = Boolean(conv.unread) && !isHighlighted;
+        const isUnread = Boolean(conv.unread) && !conv.isStop && !isHighlighted;
 
         return (
           <button

@@ -1,0 +1,16 @@
+[Unit]
+Description=RevenelX API
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/revenelx
+Environment=NODE_ENV=production
+EnvironmentFile=/opt/revenelx/backend/.env
+ExecStart=/usr/bin/npm run start:api
+Restart=always
+RestartSec=3
+User=www-data
+
+[Install]
+WantedBy=multi-user.target

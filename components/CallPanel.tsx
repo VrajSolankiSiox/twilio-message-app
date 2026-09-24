@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { apiFetch } from "@/lib/api-client";
 import LiveCallBar from "@/components/LiveCallBar";
 import { useVoiceCall } from "@/components/VoiceCallProvider";
 import { APP_INPUT, APP_LABEL, APP_SECTION } from "@/lib/app-layout";
@@ -56,7 +57,7 @@ export default function CallPanel({ prefillPhone, currentUser }: CallPanelProps)
 
   const fetchHistory = useCallback(async () => {
     try {
-      const res = await fetch("/api/call", { cache: "no-store" });
+      const res = await apiFetch("/api/call", { cache: "no-store" });
       const data = await res.json();
       if (res.ok) setCalls(data.calls);
     } catch {

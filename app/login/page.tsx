@@ -3,6 +3,7 @@
 import { useRouter, useSearchParams } from "next/navigation";
 import { FormEvent, Suspense, useState } from "react";
 import Logo from "@/components/Logo";
+import { apiFetch, setAuthToken } from "@/lib/api-client";
 
 const features = [
   {
@@ -63,7 +64,7 @@ function LoginForm() {
     setError(null);
 
     try {
-      const res = await fetch("/api/auth/login", {
+      const res = await apiFetch("/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, password }),
@@ -74,6 +75,10 @@ function LoginForm() {
       if (!res.ok) {
         setError(data.error || "Login failed");
         return;
+      }
+
+      if (typeof data.token === "string") {
+        setAuthToken(data.token);
       }
 
       const redirectTo = searchParams.get("from") || "/messages";

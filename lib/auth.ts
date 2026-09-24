@@ -1,6 +1,7 @@
 import { SignJWT, jwtVerify } from "jose";
 import { cookies } from "next/headers";
 import { findUserById, User, UserRole, verifyUserPassword } from "@/lib/db/users";
+import { requestContext } from "@/lib/request-context";
 
 const SESSION_COOKIE = "session";
 const SESSION_DURATION = "7d";
@@ -67,7 +68,28 @@ export async function verifySessionToken(
   }
 }
 
+export function tokenFromHeaders(
+  authorization: string | null,
+  cookieHeader: string | null
+): string | null {
+  if (authorization?.startsWith("Bearer ")) {
+    const bearer = authorization.slice("Bearer ".length).trim();
+    if (bearer) return bearer;
+  }
+  if (!cookieHeader) return null;
+  const parts = cookieHeader.split(";").map((part) => part.trim());
+  const session = parts.find((part) => part.startsWith(`${SESSION_COOKIE}=`));
+  if (!session) return null;
+  const value = session.slice(SESSION_COOKIE.length + 1);
+  return value ? decodeURIComponent(value) : null;
+}
+
 export async function getSession(): Promise<SessionUser | null> {
+  const scoped = requestContext.getStore();
+  if (scoped) {
+    return scoped.token ? verifySessionToken(scoped.token) : null;
+  }
+
   const cookieStore = await cookies();
   const token = cookieStore.get(SESSION_COOKIE)?.value;
   if (!token) return null;

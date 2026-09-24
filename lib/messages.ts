@@ -182,10 +182,13 @@ export function buildConversationsFromStored(
     const lastMessageDirection: "inbound" | "outbound" =
       row.lastDirection === "inbound" ? "inbound" : "outbound";
     const lastReadAt = readsByPhone?.get(phone);
-    const unread = isConversationUnread(
-      { lastMessageAt, lastMessageDirection },
-      lastReadAt
-    );
+    const isStop = Boolean(row.hasStopInbound);
+    const unread =
+      !isStop &&
+      isConversationUnread(
+        { lastMessageAt, lastMessageDirection },
+        lastReadAt
+      );
 
     return {
       id: row.id,
@@ -200,7 +203,7 @@ export function buildConversationsFromStored(
       assignedToName: row.assignedToName ?? null,
       assignedToEmail: row.assignedToEmail ?? null,
       assignedAt: row.assignedAt?.toISOString() ?? null,
-      isStop: Boolean(row.hasStopInbound),
+      isStop,
       isBlank: Boolean(row.hasOutbound) && !row.hasInbound,
       hasNonStopInbound: Boolean(row.hasNonStopInbound),
       isClosed: Boolean(row.closedAt),

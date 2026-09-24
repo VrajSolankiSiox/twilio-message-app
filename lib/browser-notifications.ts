@@ -1,6 +1,7 @@
 import { conversationLabel, type Conversation } from "@/lib/messages";
 import { normalizeAppPathname } from "@/lib/navigation";
 import { normalizePhone } from "@/lib/phone";
+import { isStopMessage } from "@/lib/stop";
 
 export const MESSAGE_NOTIFICATIONS_PREF_KEY = "revenelx-message-notifications";
 
@@ -180,6 +181,7 @@ export function notifyInboundFromConversationUpdates(
 
   for (const conv of next) {
     if (conv.lastMessageDirection !== "inbound") continue;
+    if (conv.isStop || isStopMessage(conv.lastMessage)) continue;
 
     const phone = normalizePhone(conv.phone);
     const prev = prevByPhone.get(phone);
@@ -214,8 +216,11 @@ export function notifyInboundFromThreadMessages(
   notifiedKeys: Set<string>
 ): void {
   if (!areMessageNotificationsEnabled()) return;
+  if (conversation?.isStop) return;
 
-  const inbound = newMessages.filter((m) => m.direction === "inbound");
+  const inbound = newMessages.filter(
+    (m) => m.direction === "inbound" && !isStopMessage(m.body)
+  );
   if (inbound.length === 0) return;
 
   const phone = conversation

@@ -23,6 +23,7 @@ import MessageNotificationControls from "@/components/messages/MessageNotificati
 import PageLoadingSkeleton from "@/components/PageLoadingSkeleton";
 import UserManagement from "@/components/UserManagement";
 import { APP_TESTING_BADGE } from "@/lib/app-layout";
+import { apiFetch, setAuthToken } from "@/lib/api-client";
 import {
   isAdminTab,
   isCampaignAppPath,
@@ -73,7 +74,8 @@ export default function Dashboard({ initialUser }: DashboardProps) {
   }, [routeTab, pendingTab, markTabMounted]);
 
   const handleLogout = async () => {
-    await fetch("/api/auth/logout", { method: "POST" });
+    setAuthToken(null);
+    await apiFetch("/api/auth/logout", { method: "POST" });
     router.push("/login");
     router.refresh();
   };

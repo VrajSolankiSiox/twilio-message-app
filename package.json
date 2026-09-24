@@ -6,6 +6,8 @@
     "dev": "next dev --webpack",
     "build": "next build --webpack",
     "start": "next start",
+    "dev:api": "tsx --tsconfig backend/tsconfig.json backend/src/server.ts",
+    "start:api": "tsx --tsconfig backend/tsconfig.json backend/src/server.ts",
     "lint": "eslint"
   },
   "dependencies": {
@@ -18,6 +20,7 @@
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "twilio": "^6.1.1",
+    "ws": "^8.18.3",
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
@@ -26,9 +29,11 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "@types/ws": "^8.18.1",
     "eslint": "^9",
     "eslint-config-next": "16.3.5",
     "tailwindcss": "^4",
+    "tsx": "^4.20.5",
     "typescript": "^5"
   }
 }

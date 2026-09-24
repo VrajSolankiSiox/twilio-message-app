@@ -1,5 +1,3 @@
-import "server-only";
-
 import { getTwilioClient } from "@/lib/twilio-client";
 import type { UsagePeriod } from "@/lib/twilio-usage-shared";
 import { fetchTwilioUsageRecords } from "@/lib/twilio-usage";

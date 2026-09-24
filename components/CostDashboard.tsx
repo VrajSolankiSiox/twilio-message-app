@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
+import { apiFetch } from "@/lib/api-client";
 import { CAMPAIGN_ROUTES } from "@/lib/campaign-navigation";
 import { formatMoney } from "@/lib/twilio-cost";
 import {
@@ -78,7 +79,7 @@ export default function CostDashboard() {
       if (needsRange && startDate) params.set("startDate", startDate);
       if (needsRange && endDate) params.set("endDate", endDate);
 
-      const res = await fetch(`/api/cost/usage?${params.toString()}`);
+      const res = await apiFetch(`/api/cost/usage?${params.toString()}`);
       const data = await res.json();
       if (!res.ok) {
         setError(data.error || "Failed to load Twilio usage");
@@ -99,7 +100,7 @@ export default function CostDashboard() {
   const loadCampaigns = useCallback(async () => {
     setCampaignsLoading(true);
     try {
-      const res = await fetch("/api/cost/campaigns?limit=40");
+      const res = await apiFetch("/api/cost/campaigns?limit=40");
       const data = await res.json();
       if (res.ok) {
         setCampaignRows(data.campaigns ?? []);
@@ -123,7 +124,7 @@ export default function CostDashboard() {
     void (async () => {
       setSummaryLoading(true);
       try {
-        const res = await fetch("/api/cost/summary");
+        const res = await apiFetch("/api/cost/summary");
         const data = await res.json();
         if (res.ok) {
           setMonthTotal(data.monthToDate?.total ?? 0);

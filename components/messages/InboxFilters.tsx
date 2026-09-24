@@ -7,6 +7,7 @@ interface InboxFiltersProps {
   onShowClosedChange: (value: boolean) => void;
   onShowStopChange: (value: boolean) => void;
   onShowBlankChange: (value: boolean) => void;
+  disabled?: boolean;
 }
 
 function FilterChip({
@@ -45,17 +46,20 @@ export default function InboxFilters({
   onShowClosedChange,
   onShowStopChange,
   onShowBlankChange,
+  disabled = false,
 }: InboxFiltersProps) {
   return (
     <div className="flex flex-wrap gap-2">
       <FilterChip
         label="Open"
         active={!showClosed}
+        disabled={disabled}
         onClick={() => onShowClosedChange(false)}
       />
       <FilterChip
         label="Closed"
         active={showClosed}
+        disabled={disabled}
         onClick={() => {
           onShowClosedChange(true);
           onShowStopChange(false);
@@ -67,11 +71,13 @@ export default function InboxFilters({
           <FilterChip
             label="STOP"
             active={showStop}
+            disabled={disabled}
             onClick={() => onShowStopChange(!showStop)}
           />
           <FilterChip
             label="No reply"
             active={showBlank}
+            disabled={disabled}
             onClick={() => onShowBlankChange(!showBlank)}
           />
         </>

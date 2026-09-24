@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { apiFetch } from "@/lib/api-client";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import CampaignPageHeader, {
   CreateCampaignSteps,
@@ -263,7 +264,7 @@ export default function Campaigns() {
     async (id: string, page: number, status: ActivityFilter) => {
       setDeliveryLoading(true);
       try {
-        const res = await fetch(
+        const res = await apiFetch(
           `/api/campaigns/${id}/recipients?page=${page}&limit=${CAMPAIGN_DELIVERY_PAGE_SIZE}&status=${status}`
         );
         const data = await res.json();
@@ -316,7 +317,7 @@ export default function Campaigns() {
   const loadList = useCallback(async (page: number, silent = false) => {
     if (!silent) setListLoading(true);
     try {
-      const res = await fetch(
+      const res = await apiFetch(
         `/api/campaigns?page=${page}&limit=${CAMPAIGN_LIST_PAGE_SIZE}`
       );
       const data = await res.json();
@@ -363,7 +364,7 @@ export default function Campaigns() {
   const refreshDetail = useCallback(
     async (id: string) => {
       try {
-        const res = await fetch(`/api/campaigns/${id}`);
+        const res = await apiFetch(`/api/campaigns/${id}`);
         const data = await res.json();
         if (!res.ok || !data.campaign) return;
         const current = campaignRef.current;
@@ -387,9 +388,9 @@ export default function Campaigns() {
     else setCostLoading(true);
     try {
       if (sync) {
-        await fetch(`/api/campaigns/${id}/cost`, { method: "POST" });
+        await apiFetch(`/api/campaigns/${id}/cost`, { method: "POST" });
       }
-      const res = await fetch(`/api/campaigns/${id}/cost`);
+      const res = await apiFetch(`/api/campaigns/${id}/cost`);
       const data = await res.json();
       if (res.ok && data.cost) setCampaignCost(data.cost);
     } catch {
@@ -447,7 +448,7 @@ export default function Campaigns() {
           setDispatching(true);
           let response: Response;
           try {
-            response = await fetch(`/api/campaigns/${id}/tick`, {
+            response = await apiFetch(`/api/campaigns/${id}/tick`, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
@@ -459,7 +460,7 @@ export default function Campaigns() {
             });
           } catch {
             if (runTokenRef.current !== token) return;
-            await fetch(`/api/campaigns/${id}/control`, {
+            await apiFetch(`/api/campaigns/${id}/control`, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ action: "interrupt" }),
@@ -487,7 +488,7 @@ export default function Campaigns() {
 
           if (pauseRef.current) {
             if (data?.campaign?.status === "sending") {
-              const pauseResponse = await fetch(`/api/campaigns/${id}/control`, {
+              const pauseResponse = await apiFetch(`/api/campaigns/${id}/control`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ action: "pause" }),
@@ -609,7 +610,7 @@ export default function Campaigns() {
     void (async () => {
       if (!alreadyLoaded) {
         try {
-          const res = await fetch(`/api/campaigns/${id}`);
+          const res = await apiFetch(`/api/campaigns/${id}`);
           const data = await res.json();
           if (cancelled || detailIdRef.current !== id) return;
           if (!res.ok) {
@@ -658,7 +659,7 @@ export default function Campaigns() {
     setActionBusy(true);
     setError(null);
     try {
-      const res = await fetch(`/api/campaigns/${id}/control`, {
+      const res = await apiFetch(`/api/campaigns/${id}/control`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "pause" }),
@@ -700,7 +701,7 @@ export default function Campaigns() {
     setError(null);
     setNotice(null);
     try {
-      const res = await fetch(`/api/campaigns/${id}`, { method: "DELETE" });
+      const res = await apiFetch(`/api/campaigns/${id}`, { method: "DELETE" });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         setError(data.error || "Could not delete the campaign");
@@ -732,7 +733,7 @@ export default function Campaigns() {
     setActionBusy(true);
     setError(null);
     try {
-      const res = await fetch(`/api/campaigns/${id}/control`, {
+      const res = await apiFetch(`/api/campaigns/${id}/control`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "retry_failed" }),
@@ -774,7 +775,7 @@ export default function Campaigns() {
     const namedContacts = parsed.filter((contact) => contact.name);
     if (namedContacts.length > 0) {
       try {
-        await fetch("/api/contacts", {
+        await apiFetch("/api/contacts", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ contacts: namedContacts }),
@@ -822,7 +823,7 @@ export default function Campaigns() {
     setFormError(null);
 
     try {
-      const res = await fetch("/api/campaigns", {
+      const res = await apiFetch("/api/campaigns", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

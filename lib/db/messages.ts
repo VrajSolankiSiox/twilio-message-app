@@ -57,6 +57,19 @@ export async function updateMessageStatus(
     { sid },
     { $set: { status } }
   );
+
+  const saved = await db.collection<StoredMessage>("messages").findOne(
+    { sid },
+    { projection: { contactPhone: 1, direction: 1 } }
+  );
+  if (!saved?.contactPhone) return;
+
+  const { publishRealtime } = await import("@/lib/realtime");
+  publishRealtime({
+    type: "message",
+    phone: saved.contactPhone,
+    direction: saved.direction,
+  });
 }
 
 export async function saveMessage(
@@ -120,6 +133,13 @@ export async function saveMessage(
   await recordMessageOnConversation(message, {
     inserted: write.upsertedCount > 0,
     conversationId,
+  });
+
+  const { publishRealtime } = await import("@/lib/realtime");
+  publishRealtime({
+    type: "message",
+    phone: contactPhone,
+    direction: message.direction,
   });
 }
 

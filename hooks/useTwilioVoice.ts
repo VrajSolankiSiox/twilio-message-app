@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Call, Device } from "@twilio/voice-sdk";
 import { isTwilioVoiceNotConfiguredMessage } from "@/lib/voice-client";
+import { apiFetch } from "@/lib/api-client";
 
 export type CallState =
   | "idle"
@@ -64,7 +65,7 @@ export function useTwilioVoice() {
   );
 
   const refreshToken = useCallback(async () => {
-    const res = await fetch("/api/twilio/token", { cache: "no-store" });
+    const res = await apiFetch("/api/twilio/token", { cache: "no-store" });
     const data = await res.json();
     if (!res.ok) {
       throw new Error(data.error || "Failed to get voice token");

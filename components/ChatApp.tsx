@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { apiFetch, getAuthToken, wsBase } from "@/lib/api-client";
 import { usePathname, useRouter } from "next/navigation";
 import ConversationList from "@/components/ConversationList";
 import InboxFilters from "@/components/messages/InboxFilters";
@@ -16,8 +17,6 @@ import { conversationLabel, sortConversations } from "@/lib/messages";
 import {
   CONVERSATION_LIST_PAGE_SIZE,
   MESSAGE_THREAD_PAGE_SIZE,
-  MESSAGES_POLL_INTERVAL_HIDDEN_MS,
-  MESSAGES_POLL_INTERVAL_MS,
 } from "@/lib/messaging";
 import {
   formatPhoneDisplay,
@@ -63,7 +62,9 @@ const INBOX_CACHE_KEY = "revenelx-inbox-cache-v1";
 function readInboxCache(): Conversation[] {
   if (typeof window === "undefined") return [];
   try {
-    const raw = sessionStorage.getItem(INBOX_CACHE_KEY);
+    const raw =
+      localStorage.getItem(INBOX_CACHE_KEY) ||
+      sessionStorage.getItem(INBOX_CACHE_KEY);
     if (!raw) return [];
     const parsed = JSON.parse(raw) as Conversation[];
     return Array.isArray(parsed) ? parsed : [];
@@ -78,7 +79,9 @@ function writeInboxCache(conversations: Conversation[]): void {
       ...c,
       messages: [],
     }));
-    sessionStorage.setItem(INBOX_CACHE_KEY, JSON.stringify(slim));
+    const raw = JSON.stringify(slim);
+    localStorage.setItem(INBOX_CACHE_KEY, raw);
+    sessionStorage.removeItem(INBOX_CACHE_KEY);
   } catch {
     // ignore quota
   }
@@ -168,7 +171,10 @@ function addMessageToConversations(
               lastMessage: message.body || "(media)",
               lastMessageAt: message.dateCreated,
               lastMessageDirection: message.direction,
-              unread: message.direction === "inbound",
+              unread:
+                message.direction === "inbound" &&
+                !isStopMessage(message.body) &&
+                !c.isStop,
               isBlank: false,
               isStop:
                 c.isStop ||
@@ -191,7 +197,8 @@ function addMessageToConversations(
       lastMessage: message.body || "(media)",
       lastMessageAt: message.dateCreated,
       lastMessageDirection: message.direction,
-      unread: message.direction === "inbound",
+      unread:
+        message.direction === "inbound" && !isStopMessage(message.body),
       assignedToUserId: null,
       assignedToName: null,
       assignedToEmail: null,
@@ -278,7 +285,7 @@ export default function ChatApp() {
       return;
     }
 
-    fetch("/api/users")
+    apiFetch("/api/users")
       .then((res) => res.json())
       .then((data) => {
         if (Array.isArray(data.users)) {
@@ -327,7 +334,7 @@ export default function ChatApp() {
       );
 
       try {
-        await fetch("/api/twilio/messages/read", {
+        await apiFetch("/api/twilio/messages/read", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -381,7 +388,7 @@ export default function ChatApp() {
         });
         if (options?.before) params.set("before", options.before);
 
-        const res = await fetch(`/api/twilio/messages/thread?${params}`, {
+        const res = await apiFetch(`/api/twilio/messages/thread?${params}`, {
           cache: "no-store",
         });
         const data = await res.json();
@@ -538,7 +545,7 @@ export default function ChatApp() {
           if (showBlank) params.set("showBlank", "true");
         }
 
-        const res = await fetch(`/api/twilio/messages?${params}`, {
+        const res = await apiFetch(`/api/twilio/messages?${params}`, {
           cache: "no-store",
         });
         const data = await res.json();
@@ -622,62 +629,76 @@ export default function ChatApp() {
     [getNotificationContext, showClosed, showStop, showBlank]
   );
 
-  const syncAfterSend = useCallback(async () => {
-    const delays = [1000, 2500, 5000];
-    for (const delay of delays) {
-      await new Promise((r) => setTimeout(r, delay));
-      await fetchConversations();
-    }
-  }, [fetchConversations]);
+  const isFirstListLoad = useRef(true);
 
   useEffect(() => {
     setListPage(1);
-    void fetchConversations({
-      page: 1,
-      silent: inboxCacheReadyRef.current,
-    });
+    const silent = isFirstListLoad.current && inboxCacheReadyRef.current;
+    isFirstListLoad.current = false;
+    if (!silent) setLoading(true);
+    void fetchConversations({ page: 1, silent });
   }, [fetchConversations]);
 
   useEffect(() => {
-    let intervalId: number | null = null;
+    let socket: WebSocket | null = null;
+    let stopped = false;
+    let attempt = 0;
+    let retryTimer: number | null = null;
 
-    const pollIntervalMs = () =>
-      document.hidden
-        ? MESSAGES_POLL_INTERVAL_HIDDEN_MS
-        : MESSAGES_POLL_INTERVAL_MS;
-
-    const poll = () => {
-      void fetchConversations({ page: 1, silent: true });
-      if (selectedPhone) {
-        void loadThread(selectedPhone, { appendNew: true, silent: true });
+    const connect = () => {
+      if (stopped) return;
+      const base = wsBase();
+      const token = getAuthToken();
+      if (!base || !token) {
+        retryTimer = window.setTimeout(connect, 2000);
+        return;
       }
+      socket = new WebSocket(
+        `${base}/ws?token=${encodeURIComponent(token)}`
+      );
+      socket.onopen = () => {
+        attempt = 0;
+      };
+      socket.onmessage = (event) => {
+        try {
+          const data = JSON.parse(String(event.data)) as {
+            type?: string;
+            phone?: string;
+          };
+          if (data.type !== "message") return;
+          void fetchConversations({ page: 1, silent: true });
+          const openPhone = selectedPhoneRef.current;
+          if (
+            openPhone &&
+            (!data.phone ||
+              normalizePhone(data.phone) === normalizePhone(openPhone))
+          ) {
+            void loadThread(openPhone, { appendNew: true, silent: true });
+          }
+        } catch {
+          // Ignore malformed frames.
+        }
+      };
+      socket.onerror = () => {
+        socket?.close();
+      };
+      socket.onclose = () => {
+        socket = null;
+        if (stopped) return;
+        attempt += 1;
+        const delay = Math.min(15000, 1000 * 2 ** Math.min(attempt, 4));
+        retryTimer = window.setTimeout(connect, delay);
+      };
     };
 
-    const restartInterval = () => {
-      if (intervalId !== null) {
-        window.clearInterval(intervalId);
-      }
-      intervalId = window.setInterval(poll, pollIntervalMs());
-    };
-
-    restartInterval();
-
-    const onVisibilityChange = () => {
-      if (!document.hidden) {
-        poll();
-      }
-      restartInterval();
-    };
-
-    document.addEventListener("visibilitychange", onVisibilityChange);
+    connect();
 
     return () => {
-      if (intervalId !== null) {
-        window.clearInterval(intervalId);
-      }
-      document.removeEventListener("visibilitychange", onVisibilityChange);
+      stopped = true;
+      if (retryTimer !== null) window.clearTimeout(retryTimer);
+      socket?.close();
     };
-  }, [fetchConversations, loadThread, selectedPhone]);
+  }, [fetchConversations, loadThread]);
 
   useEffect(() => {
     if (!selectedPhone) return;
@@ -743,7 +764,7 @@ export default function ChatApp() {
 
     setClosing(true);
     try {
-      const res = await fetch("/api/conversations/close", {
+      const res = await apiFetch("/api/conversations/close", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -780,7 +801,7 @@ export default function ChatApp() {
 
     setAssigning(true);
     try {
-      const res = await fetch("/api/conversations/assign", {
+      const res = await apiFetch("/api/conversations/assign", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -834,7 +855,7 @@ export default function ChatApp() {
     shouldAutoScrollRef.current = true;
 
     try {
-      const res = await fetch("/api/send", {
+      const res = await apiFetch("/api/send", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -883,7 +904,6 @@ export default function ChatApp() {
         );
         setSelectedPhone(normalizePhone(result.to));
         requestAnimationFrame(() => scrollToBottom(true));
-        syncAfterSend();
       }
     } catch {
       setReplyText(text);
@@ -927,6 +947,7 @@ export default function ChatApp() {
                 onShowClosedChange={setShowClosed}
                 onShowStopChange={setShowStop}
                 onShowBlankChange={setShowBlank}
+                disabled={loading}
               />
               <MessageNotificationControls variant="chip" />
             </div>

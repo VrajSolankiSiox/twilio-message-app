@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useState } from "react";
+import { apiFetch } from "@/lib/api-client";
 import { APP_INPUT, APP_LABEL, APP_SECTION_LG, APP_SECTION_TITLE } from "@/lib/app-layout";
 
 interface User {
@@ -27,7 +28,7 @@ export default function UserManagement({ canInvite = false }: UserManagementProp
 
   const fetchUsers = useCallback(async () => {
     try {
-      const res = await fetch("/api/users");
+      const res = await apiFetch("/api/users");
       const data = await res.json();
       if (!res.ok) {
         setError(data.error || "Failed to load users");
@@ -52,7 +53,7 @@ export default function UserManagement({ canInvite = false }: UserManagementProp
     setSuccess(null);
 
     try {
-      const res = await fetch("/api/users", {
+      const res = await apiFetch("/api/users", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ fullName, email, password }),

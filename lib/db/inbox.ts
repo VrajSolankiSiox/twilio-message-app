@@ -13,9 +13,6 @@ interface InboxMeta {
   builtAt: Date;
 }
 
-let cachedRows: ConversationAssignment[] | null = null;
-let persistPromise: Promise<void> | null = null;
-
 async function assignMissingConversationIds(): Promise<void> {
   const db = await getDb();
   const col = db.collection<ConversationAssignment>("conversations");
@@ -192,14 +189,28 @@ async function persistInboxSummaries(
   cachedRows = null;
 }
 
-function schedulePersist(rows: ConversationAssignment[]): void {
-  if (persistPromise || rows.length === 0) return;
-  persistPromise = persistInboxSummaries(rows)
+let cachedRows: ConversationAssignment[] | null = null;
+let rebuildPromise: Promise<void> | null = null;
+
+function scheduleRebuild(): void {
+  if (rebuildPromise) return;
+  rebuildPromise = (async () => {
+    const db = await getDb();
+    const [stats, existing] = await Promise.all([
+      aggregateInboxFast(),
+      db.collection<ConversationAssignment>("conversations").find({}).toArray(),
+    ]);
+    const rows = mergeFastRows(stats, existing);
+    if (rows.length > 0) {
+      cachedRows = rows;
+      await persistInboxSummaries(rows);
+    }
+  })()
     .catch(() => {
-      // The next list load retries the save.
+      // The next inbox read retries the rebuild.
     })
     .finally(() => {
-      persistPromise = null;
+      rebuildPromise = null;
     });
 }
 
@@ -207,43 +218,35 @@ export async function listStoredConversations(): Promise<
   ConversationAssignment[]
 > {
   const { ensureConversationIndexes } = await import("@/lib/db/conversations");
-  await ensureConversationIndexes();
+  void ensureConversationIndexes().catch(() => {
+    // Index creation must not block the inbox response.
+  });
 
   const db = await getDb();
   const meta = await db
     .collection<InboxMeta>("app_meta")
-    .findOne({ _id: "inbox_summaries" });
+    .findOne({ _id: "inbox_summaries" }, { projection: { version: 1 } });
 
   if (meta?.version === SUMMARY_VERSION) {
-    return readStoredInbox();
-  }
-
-  if (cachedRows) {
-    schedulePersist(cachedRows);
+    if (cachedRows) return cachedRows;
+    cachedRows = await readStoredInbox();
     return cachedRows;
   }
 
-  try {
-    const [stats, existing] = await Promise.all([
-      aggregateInboxFast(),
-      db.collection<ConversationAssignment>("conversations").find({}).toArray(),
-    ]);
-    cachedRows = mergeFastRows(stats, existing);
-  } catch {
-    const stored = await readStoredInbox();
-    cachedRows =
-      stored.length > 0
-        ? stored
-        : await db
-            .collection<ConversationAssignment>("conversations")
-            .find({})
-            .toArray();
+  if (cachedRows) {
+    scheduleRebuild();
+    return cachedRows;
   }
 
-  if (cachedRows.some((row) => row.lastMessageAt)) {
-    schedulePersist(cachedRows);
+  const stored = await readStoredInbox();
+  if (stored.length > 0) {
+    cachedRows = stored;
+    scheduleRebuild();
+    return stored;
   }
-  return cachedRows;
+
+  scheduleRebuild();
+  return [];
 }
 
 export async function recordMessageOnConversation(

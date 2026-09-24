@@ -1,5 +1,3 @@
-import "server-only";
-
 import twilio from "twilio";
 
 export function getTwilioClient() {

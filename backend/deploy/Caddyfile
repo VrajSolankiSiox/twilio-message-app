@@ -1,0 +1,5 @@
+# Replace api.example.com with your domain.
+# Caddy obtains a certificate and proxies HTTPS and WSS to the API.
+api.example.com {
+	reverse_proxy 127.0.0.1:4000
+}
