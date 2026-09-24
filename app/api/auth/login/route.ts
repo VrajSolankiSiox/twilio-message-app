@@ -1,9 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import {
-  authenticateUser,
-  createSessionToken,
-  SESSION_COOKIE,
-} from "@/lib/auth";
+import { authenticateUser, createSessionToken } from "@/lib/auth";
 
 export async function POST(request: NextRequest) {
   try {
@@ -26,7 +22,7 @@ export async function POST(request: NextRequest) {
 
     const token = await createSessionToken(user);
 
-    const response = NextResponse.json({
+    return NextResponse.json({
       success: true,
       token,
       user: {
@@ -36,16 +32,6 @@ export async function POST(request: NextRequest) {
         role: user.role,
       },
     });
-
-    response.cookies.set(SESSION_COOKIE, token, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "lax",
-      maxAge: 60 * 60 * 24 * 7,
-      path: "/",
-    });
-
-    return response;
   } catch (error) {
     console.error("Login error:", error);
 

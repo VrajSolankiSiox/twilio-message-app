@@ -33,15 +33,18 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
-  const token = request.cookies.get("session")?.value;
+  if (!pathname.startsWith("/api/")) {
+    return NextResponse.next();
+  }
+
+  const authorization = request.headers.get("authorization");
+  const bearer = authorization?.startsWith("Bearer ")
+    ? authorization.slice("Bearer ".length).trim()
+    : "";
+  const token = bearer || request.cookies.get("session")?.value;
 
   if (!token) {
-    if (pathname.startsWith("/api/")) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-    const loginUrl = new URL("/login", request.url);
-    loginUrl.searchParams.set("from", pathname);
-    return NextResponse.redirect(loginUrl);
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   try {
@@ -51,11 +54,7 @@ export async function middleware(request: NextRequest) {
     await jwtVerify(token, new TextEncoder().encode(secret));
     return NextResponse.next();
   } catch {
-    if (pathname.startsWith("/api/")) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-    const loginUrl = new URL("/login", request.url);
-    return NextResponse.redirect(loginUrl);
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 }
 

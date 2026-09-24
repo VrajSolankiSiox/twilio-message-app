@@ -36,7 +36,7 @@ export async function markConversationRead(
 export async function getConversationReadsForUser(
   userId: string
 ): Promise<Map<string, Date>> {
-  await ensureIndexes();
+  void ensureIndexes().catch(() => undefined);
   const db = await getDb();
   const rows = await db
     .collection<ConversationReadDocument>("conversation_reads")

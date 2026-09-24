@@ -25,23 +25,15 @@ export function wsBase(): string {
 
 export function getAuthToken(): string | null {
   if (typeof window === "undefined") return null;
-  const stored = sessionStorage.getItem(TOKEN_KEY);
-  if (stored) return stored;
-  const match = document.cookie.match(/(?:^|;\s*)session=([^;]+)/);
-  return match?.[1] ? decodeURIComponent(match[1]) : null;
+  return sessionStorage.getItem(TOKEN_KEY);
 }
 
 export function setAuthToken(token: string | null): void {
   if (typeof window === "undefined") return;
   if (token) {
     sessionStorage.setItem(TOKEN_KEY, token);
-    document.cookie = `session=${token}; Path=/; Max-Age=${60 * 60 * 24 * 7}; SameSite=Lax${
-      window.location.protocol === "https:" ? "; Secure" : ""
-    }`;
   } else {
     sessionStorage.removeItem(TOKEN_KEY);
-    const secure = window.location.protocol === "https:" ? "; Secure" : "";
-    document.cookie = `session=; Path=/; Max-Age=0; SameSite=Lax${secure}`;
   }
 }
 

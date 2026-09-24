@@ -40,14 +40,11 @@ export interface CurrentUser {
   role: "admin" | "employee";
 }
 
-interface DashboardProps {
-  initialUser: CurrentUser | null;
-}
-
-export default function Dashboard({ initialUser }: DashboardProps) {
+export default function Dashboard() {
   const router = useRouter();
   const pathname = usePathname();
-  const user = initialUser;
+  const [user, setUser] = useState<CurrentUser | null>(null);
+  const [sessionReady, setSessionReady] = useState(false);
   const routeTab = useMemo(() => resolveTabFromPathname(pathname), [pathname]);
   const [pendingTab, setPendingTab] = useState<NavTab | null>(null);
   const [, startTransition] = useTransition();
@@ -73,11 +70,33 @@ export default function Dashboard({ initialUser }: DashboardProps) {
     }
   }, [routeTab, pendingTab, markTabMounted]);
 
+  useEffect(() => {
+    let cancelled = false;
+    apiFetch("/api/auth/me")
+      .then(async (res) => {
+        if (!res.ok) throw new Error("Unauthorized");
+        const data = await res.json();
+        if (!cancelled) setUser(data.user ?? null);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setAuthToken(null);
+          router.replace("/login");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setSessionReady(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [router]);
+
   const handleLogout = async () => {
     setAuthToken(null);
-    await apiFetch("/api/auth/logout", { method: "POST" });
+    setUser(null);
+    await fetch("/api/auth/logout", { method: "POST" }).catch(() => undefined);
     router.push("/login");
-    router.refresh();
   };
 
   const isAdmin = user?.role === "admin";
@@ -122,6 +141,14 @@ export default function Dashboard({ initialUser }: DashboardProps) {
   };
 
   const isTabMounted = (tab: NavTab) => mountedTabs.has(tab);
+
+  if (!sessionReady || !user) {
+    return (
+      <div className="flex h-dvh items-center justify-center bg-background">
+        <div className="h-6 w-6 animate-spin rounded-full border-2 border-brand border-t-transparent" />
+      </div>
+    );
+  }
 
   return (
     <VoiceCallProvider>
