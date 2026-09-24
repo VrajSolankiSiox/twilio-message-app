@@ -140,6 +140,8 @@ export async function saveMessage(
     type: "message",
     phone: contactPhone,
     direction: message.direction,
+    body: message.body,
+    at: message.dateCreated.toISOString(),
   });
 }
 
@@ -263,7 +265,7 @@ export async function getMessagesForContact(
   hasMore: boolean;
   totalCount: number;
 }> {
-  await ensureIndexes();
+  void ensureIndexes().catch(() => undefined);
   const db = await getDb();
   const contactPhone = normalizePhone(phone);
   const limit = Math.max(1, options.limit);

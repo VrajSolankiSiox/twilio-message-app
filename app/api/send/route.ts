@@ -4,12 +4,11 @@ import { getSession } from "@/lib/auth";
 import {
   assignConversation,
   ensureConversationExists,
-  getAllAssignments,
   getAssignment,
   upsertContactNames,
 } from "@/lib/db/conversations";
-import { getAllMessages, saveMessage } from "@/lib/db/messages";
-import { buildConversations, canUserReplyToConversation } from "@/lib/messages";
+import { saveMessage } from "@/lib/db/messages";
+import { canUserReplyToConversation, type Conversation } from "@/lib/messages";
 import { getMessageStatusCallbackUrl } from "@/lib/message-status";
 import { normalizePhone } from "@/lib/phone";
 
@@ -69,17 +68,13 @@ export async function POST(request: NextRequest) {
 
     if (!isBulk && phoneNumbers.length === 1) {
       const phone = normalizePhone(phoneNumbers[0]);
-      const [messages, assignments] = await Promise.all([
-        getAllMessages(),
-        getAllAssignments(),
-      ]);
-      const conversations = buildConversations(messages, assignments);
-      const conversation = conversations.find(
-        (c) => normalizePhone(c.phone) === phone
-      );
+      const existing = await getAssignment(phone);
+      const conversation = {
+        assignedToUserId: existing?.assignedToUserId ?? null,
+      } as Conversation;
 
       if (
-        conversation &&
+        existing &&
         !canUserReplyToConversation(conversation, session.userId, session.role)
       ) {
         return NextResponse.json(

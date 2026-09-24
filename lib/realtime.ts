@@ -2,6 +2,8 @@ export interface RealtimeEvent {
   type: "message";
   phone: string;
   direction: "inbound" | "outbound";
+  body?: string;
+  at?: string;
 }
 
 type Listener = (event: RealtimeEvent) => void;

@@ -304,6 +304,47 @@ select:focus {
   filter: brightness(1.04);
 }
 
+.inbox-refresh {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  height: 3px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--brand) 14%, transparent);
+}
+
+.inbox-refresh-line {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 38%;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    color-mix(in srgb, var(--brand) 35%, white) 45%,
+    var(--brand) 50%,
+    color-mix(in srgb, var(--brand) 35%, white) 55%,
+    transparent 100%
+  );
+  animation: inbox-refresh-slide 1.15s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
+.inbox-refresh-line:nth-child(2) {
+  width: 24%;
+  opacity: 0.55;
+  animation-delay: 0.38s;
+}
+
+@keyframes inbox-refresh-slide {
+  0% {
+    transform: translateX(-130%);
+  }
+  100% {
+    transform: translateX(420%);
+  }
+}
+
 .nav-item-active {
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
 }

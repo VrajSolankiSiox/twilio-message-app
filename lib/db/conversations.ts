@@ -48,7 +48,6 @@ export function newConversationId(): string {
 export async function getAssignment(
   phone: string
 ): Promise<ConversationAssignment | null> {
-  await ensureIndexes();
   const db = await getDb();
   return db
     .collection<ConversationAssignment>("conversations")
@@ -168,13 +167,11 @@ export async function setConversationAssignee(
 export async function setConversationClosed(
   phone: string,
   closed: boolean,
-  closedBy?: { userId: string; fullName: string }
-): Promise<ConversationAssignment> {
-  await ensureIndexes();
+  closedBy?: { userId: string; fullName: string },
+  viewer?: { userId: string; role: string }
+): Promise<ConversationAssignment | null> {
   const normalized = normalizePhone(phone);
   const now = new Date();
-
-  await ensureConversationExists(normalized);
   const db = await getDb();
 
   const fields = closed
@@ -191,15 +188,18 @@ export async function setConversationClosed(
         updatedAt: now,
       };
 
-  await db
-    .collection<ConversationAssignment>("conversations")
-    .updateOne({ phone: normalized }, { $set: fields });
+  const col = db.collection<ConversationAssignment>("conversations");
+  const existing = await col.findOne({ phone: normalized });
+  if (!existing) return null;
 
-  const updated = await getAssignment(normalized);
-  if (!updated) {
-    throw new Error("Failed to update closed state");
+  if (viewer && viewer.role !== "admin") {
+    const owner = existing.assignedToUserId;
+    if (owner && owner !== viewer.userId) return null;
   }
-  return updated;
+
+  const result = await col.updateOne({ _id: existing._id }, { $set: fields });
+  if (result.matchedCount !== 1) return null;
+  return { ...existing, ...fields };
 }
 
 export async function reopenConversationIfClosed(phone: string): Promise<void> {

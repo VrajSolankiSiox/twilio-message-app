@@ -1,11 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
-import { getAllAssignments, setConversationClosed } from "@/lib/db/conversations";
-import { getAllMessages } from "@/lib/db/messages";
-import {
-  buildConversations,
-  canUserViewConversation,
-} from "@/lib/messages";
+import { setConversationClosed } from "@/lib/db/conversations";
+import { invalidateInboxCache } from "@/lib/db/inbox";
 import { normalizePhone } from "@/lib/phone";
 
 export async function POST(request: NextRequest) {
@@ -23,29 +19,18 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Phone is required" }, { status: 400 });
     }
 
-    const [messages, assignments] = await Promise.all([
-      getAllMessages(),
-      getAllAssignments(),
-    ]);
-    const conversations = buildConversations(messages, assignments);
-    const conversation = conversations.find(
-      (c) => normalizePhone(c.phone) === normalizePhone(phone)
-    );
-
-    if (
-      !conversation ||
-      !canUserViewConversation(conversation, session.userId, session.role)
-    ) {
-      return NextResponse.json({ error: "Conversation not found" }, { status: 404 });
-    }
-
     const assignment = await setConversationClosed(
-      phone,
+      normalizePhone(phone),
       closed,
       closed
         ? { userId: session.userId, fullName: session.fullName }
-        : undefined
+        : undefined,
+      { userId: session.userId, role: session.role }
     );
+    if (!assignment) {
+      return NextResponse.json({ error: "Conversation not found" }, { status: 404 });
+    }
+    invalidateInboxCache();
 
     return NextResponse.json({
       assignment: {

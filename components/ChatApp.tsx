@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { apiFetch, getAuthToken, wsBase } from "@/lib/api-client";
 import { usePathname, useRouter } from "next/navigation";
 import ConversationList from "@/components/ConversationList";
@@ -55,6 +55,57 @@ function useRelativeTimeClock(intervalMs = 60_000): Date {
     return () => clearInterval(id);
   }, [intervalMs]);
   return now;
+}
+
+const INBOX_CACHE_KEY = "revenelx-inbox-cache-v2";
+
+type ListSnapshot = {
+  conversations: Conversation[];
+  total: number;
+  hasMore: boolean;
+};
+
+function readInboxStore(): Map<string, ListSnapshot> {
+  if (typeof window === "undefined") return new Map();
+  try {
+    const raw = localStorage.getItem(INBOX_CACHE_KEY);
+    if (!raw) return new Map();
+    const parsed = JSON.parse(raw) as Record<string, ListSnapshot>;
+    return new Map(
+      Object.entries(parsed).map(([key, value]) => [
+        key,
+        {
+          total: value.total ?? 0,
+          hasMore: Boolean(value.hasMore),
+          conversations: (value.conversations ?? []).map((conv) => ({
+            ...conv,
+            messages: [],
+          })),
+        },
+      ])
+    );
+  } catch {
+    return new Map();
+  }
+}
+
+function writeInboxStore(lists: Map<string, ListSnapshot>): void {
+  try {
+    const slim: Record<string, ListSnapshot> = {};
+    for (const [key, value] of lists) {
+      slim[key] = {
+        total: value.total,
+        hasMore: value.hasMore,
+        conversations: value.conversations.slice(0, 40).map((conv) => ({
+          ...conv,
+          messages: [],
+        })),
+      };
+    }
+    localStorage.setItem(INBOX_CACHE_KEY, JSON.stringify(slim));
+  } catch {
+    // Ignore quota errors. The server response is still shown.
+  }
 }
 
 function formatDateDivider(dateStr: string): string {
@@ -195,6 +246,7 @@ export default function ChatApp() {
   const [mobilePane, setMobilePane] = useState<"list" | "chat">("list");
   const [replyText, setReplyText] = useState("");
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showClosed, setShowClosed] = useState(false);
@@ -217,6 +269,21 @@ export default function ChatApp() {
   selectedPhoneRef.current = selectedPhone;
   const inboxNotificationsReadyRef = useRef(false);
   const notifiedInboundKeysRef = useRef(new Set<string>());
+  const threadCacheRef = useRef(
+    new Map<
+      string,
+      { messages: ChatMessage[]; hasOlderMessages?: boolean; messageCount?: number }
+    >()
+  );
+  const listCacheRef = useRef(
+    new Map<
+      string,
+      { conversations: Conversation[]; total: number; hasMore: boolean }
+    >()
+  );
+  const pendingClosedRef = useRef(new Map<string, Conversation>());
+  const filterKeyRef = useRef("0:0:0");
+  filterKeyRef.current = `${showClosed}:${showStop}:${showBlank}`;
 
   const getNotificationContext = useCallback(
     () => ({
@@ -408,6 +475,11 @@ export default function ChatApp() {
               latestReadAt = latest.dateCreated;
             }
 
+            threadCacheRef.current.set(normalized, {
+              messages,
+              hasOlderMessages: data.hasMore,
+              messageCount: data.totalCount,
+            });
             return {
               ...c,
               messages,
@@ -495,15 +567,35 @@ export default function ChatApp() {
     }
   };
 
+  const applyPendingClosed = useCallback(
+    (list: Conversation[], filterKey: string) => {
+      const showingClosed = filterKey.startsWith("true:");
+      if (showingClosed) {
+        const seen = new Set(list.map((c) => normalizePhone(c.phone)));
+        const extras = [...pendingClosedRef.current.values()].filter(
+          (c) => !seen.has(normalizePhone(c.phone))
+        );
+        return extras.length > 0 ? sortConversations([...extras, ...list]) : list;
+      }
+      if (pendingClosedRef.current.size === 0) return list;
+      return list.filter(
+        (c) => !pendingClosedRef.current.has(normalizePhone(c.phone))
+      );
+    },
+    []
+  );
+
   const fetchConversations = useCallback(
     async (options?: { page?: number; append?: boolean; silent?: boolean }) => {
       const page = options?.page ?? 1;
       const append = options?.append ?? false;
       const silent = options?.silent ?? false;
+      const requestKey = filterKeyRef.current;
 
       try {
         if (append) setLoadingMoreList(true);
         else if (!silent) setLoading(true);
+        else setRefreshing(true);
 
         const params = new URLSearchParams({
           page: String(page),
@@ -526,11 +618,24 @@ export default function ChatApp() {
         }
 
         setError(null);
-        setHasMoreConversations(Boolean(data.hasMore));
-        setConversationTotal(data.total ?? data.conversations.length);
-        setListPage(page);
+        const serverList = applyPendingClosed(
+          data.conversations as Conversation[],
+          requestKey
+        );
+        for (const conv of serverList) {
+          if (conv.isClosed) pendingClosedRef.current.delete(normalizePhone(conv.phone));
+        }
+        const visibleList = applyPendingClosed(serverList, requestKey);
+        if (filterKeyRef.current === requestKey) {
+          setHasMoreConversations(Boolean(data.hasMore));
+          setConversationTotal(
+            (data.total ?? data.conversations.length) +
+              (visibleList.length - serverList.length)
+          );
+          setListPage(page);
+        }
 
-        if (append) {
+        if (append && filterKeyRef.current === requestKey) {
           setConversations((prev) => {
             const seen = new Set(prev.map((c) => normalizePhone(c.phone)));
             const next = [...prev];
@@ -543,12 +648,15 @@ export default function ChatApp() {
             }
             return next;
           });
-        } else if (silent) {
+        } else if (silent && filterKeyRef.current === requestKey) {
           setConversations((prev) => {
-            const next = mergeConversationList(
-              prev,
-              data.conversations as Conversation[],
-              selectedPhoneRef.current
+            const next = applyPendingClosed(
+              mergeConversationList(
+                prev,
+                visibleList,
+                selectedPhoneRef.current
+              ),
+              requestKey
             );
             if (inboxNotificationsReadyRef.current) {
               notifyInboundFromConversationUpdates(
@@ -560,8 +668,28 @@ export default function ChatApp() {
             }
             return next;
           });
-        } else {
-          setConversations(data.conversations);
+        } else if (filterKeyRef.current === requestKey) {
+          setConversations(
+            visibleList.map((conv) => {
+              const cached = threadCacheRef.current.get(normalizePhone(conv.phone));
+              if (!cached) return conv;
+              return {
+                ...conv,
+                messages: cached.messages,
+                hasOlderMessages: cached.hasOlderMessages,
+                messageCount: cached.messageCount ?? conv.messageCount,
+              };
+            })
+          );
+        }
+
+        if (!append && page === 1) {
+          listCacheRef.current.set(requestKey, {
+            conversations: visibleList,
+            total: visibleList.length,
+            hasMore: Boolean(data.hasMore),
+          });
+          writeInboxStore(listCacheRef.current);
         }
 
         if (!append) {
@@ -589,14 +717,48 @@ export default function ChatApp() {
         setError("Network error while loading messages.");
       } finally {
         setLoading(false);
+        setRefreshing(false);
         setLoadingMoreList(false);
       }
     },
-    [getNotificationContext, showClosed, showStop, showBlank]
+    [applyPendingClosed, getNotificationContext, showClosed, showStop, showBlank]
   );
+
+  useLayoutEffect(() => {
+    const stored = readInboxStore();
+    if (stored.size === 0) return;
+    listCacheRef.current = stored;
+    const cached = stored.get(filterKeyRef.current);
+    if (!cached) return;
+    setConversations(cached.conversations);
+    setConversationTotal(cached.total);
+    setHasMoreConversations(cached.hasMore);
+    setLoading(false);
+  }, []);
 
   useEffect(() => {
     setListPage(1);
+    const cached = listCacheRef.current.get(filterKeyRef.current);
+    if (cached) {
+      setConversations(
+        cached.conversations.map((conv) => {
+          const thread = threadCacheRef.current.get(normalizePhone(conv.phone));
+          if (!thread) return conv;
+          return {
+            ...conv,
+            messages: thread.messages,
+            hasOlderMessages: thread.hasOlderMessages,
+            messageCount: thread.messageCount ?? conv.messageCount,
+          };
+        })
+      );
+      setConversationTotal(cached.total);
+      setHasMoreConversations(cached.hasMore);
+      setLoading(false);
+      void fetchConversations({ page: 1, silent: true });
+      return;
+    }
+    setConversations([]);
     setLoading(true);
     void fetchConversations({ page: 1 });
   }, [fetchConversations]);
@@ -626,8 +788,71 @@ export default function ChatApp() {
           const data = JSON.parse(String(event.data)) as {
             type?: string;
             phone?: string;
+            direction?: string;
+            body?: string;
+            at?: string;
           };
           if (data.type !== "message") return;
+          const phone = data.phone ? normalizePhone(data.phone) : "";
+          const direction = data.direction === "outbound" ? "outbound" : "inbound";
+          const at = data.at || new Date().toISOString();
+          const body = data.body || "";
+          if (phone) {
+            const stop = direction === "inbound" && isStopMessage(body);
+            pendingClosedRef.current.delete(phone);
+            const openKey = "false:false:false";
+            setConversations((prev) => {
+              const existing = prev.find((c) => normalizePhone(c.phone) === phone);
+              const viewing =
+                normalizePhone(selectedPhoneRef.current || "") === phone;
+              const nextConv: Conversation = existing
+                ? {
+                    ...existing,
+                    lastMessage: body || existing.lastMessage,
+                    lastMessageAt: at,
+                    lastMessageDirection: direction,
+                    unread: direction === "inbound" && !stop && !viewing,
+                    isClosed: direction === "inbound" ? false : existing.isClosed,
+                    closedAt: direction === "inbound" ? null : existing.closedAt,
+                    isStop: existing.isStop || stop,
+                  }
+                : {
+                    phone,
+                    contactName: null,
+                    messages: [],
+                    lastMessage: body,
+                    lastMessageAt: at,
+                    lastMessageDirection: direction,
+                    unread: direction === "inbound" && !stop,
+                    assignedToUserId: null,
+                    assignedToName: null,
+                    assignedToEmail: null,
+                    assignedAt: null,
+                    isStop: stop,
+                    isBlank: direction === "outbound",
+                    isClosed: false,
+                    closedAt: null,
+                  };
+              const rest = prev.filter((c) => normalizePhone(c.phone) !== phone);
+              const open = listCacheRef.current.get(openKey);
+              const openRest = (open?.conversations ?? []).filter(
+                (c) => normalizePhone(c.phone) !== phone
+              );
+              listCacheRef.current.set(openKey, {
+                conversations: sortConversations([
+                  { ...nextConv, messages: [] },
+                  ...openRest,
+                ]),
+                total: openRest.length + 1,
+                hasMore: open?.hasMore ?? false,
+              });
+              writeInboxStore(listCacheRef.current);
+              if (filterKeyRef.current.startsWith("true:") && !nextConv.isClosed) {
+                return rest;
+              }
+              return sortConversations([nextConv, ...rest]);
+            });
+          }
           void fetchConversations({ page: 1, silent: true });
           const openPhone = selectedPhoneRef.current;
           if (
@@ -722,37 +947,121 @@ export default function ChatApp() {
   };
 
   const handleSetClosed = async (closed: boolean) => {
-    if (!selectedConversation) return;
+    if (!selectedConversation || closing) return;
+
+    const phone = selectedConversation.phone;
+    const normalized = normalizePhone(phone);
+    const previous = selectedConversation;
+    setError(null);
+    const closedConv: Conversation = {
+      ...previous,
+      isClosed: true,
+      closedAt: new Date().toISOString(),
+    };
+
+    if (closed) {
+      pendingClosedRef.current.set(normalized, closedConv);
+      for (const [key, entry] of listCacheRef.current) {
+        const without = entry.conversations.filter(
+          (c) => normalizePhone(c.phone) !== normalized
+        );
+        listCacheRef.current.set(
+          key,
+          key.startsWith("true:")
+            ? {
+                conversations: sortConversations([closedConv, ...without]),
+                total: without.length + 1,
+                hasMore: entry.hasMore,
+              }
+            : {
+                conversations: without,
+                total: Math.max(0, entry.total - 1),
+                hasMore: entry.hasMore,
+              }
+        );
+      }
+      const closedKey = "true:false:false";
+      if (!listCacheRef.current.has(closedKey)) {
+        listCacheRef.current.set(closedKey, {
+          conversations: [closedConv],
+          total: 1,
+          hasMore: false,
+        });
+      }
+      writeInboxStore(listCacheRef.current);
+    } else {
+      pendingClosedRef.current.delete(normalized);
+      const openConv: Conversation = {
+        ...previous,
+        isClosed: false,
+        closedAt: null,
+      };
+      for (const [key, entry] of listCacheRef.current) {
+        const without = entry.conversations.filter(
+          (c) => normalizePhone(c.phone) !== normalized
+        );
+        listCacheRef.current.set(
+          key,
+          key.startsWith("true:")
+            ? {
+                conversations: without,
+                total: Math.max(0, entry.total - 1),
+                hasMore: entry.hasMore,
+              }
+            : {
+                conversations: sortConversations([openConv, ...without]),
+                total: without.length + 1,
+                hasMore: entry.hasMore,
+              }
+        );
+      }
+      writeInboxStore(listCacheRef.current);
+    }
+
+    if ((closed && !showClosed) || (!closed && showClosed)) {
+      setConversations((prev) =>
+        prev.filter((c) => normalizePhone(c.phone) !== normalized)
+      );
+      setConversationTotal((total) => Math.max(0, total - 1));
+      setSelectedPhone(null);
+      if (isMobile) setMobilePane("list");
+    } else {
+      patchConversationClosed(phone, closed, closed ? closedConv.closedAt : null);
+    }
 
     setClosing(true);
     try {
       const res = await apiFetch("/api/conversations/close", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          phone: selectedConversation.phone,
-          closed,
-        }),
+        body: JSON.stringify({ phone, closed }),
       });
       const data = await res.json();
 
-      if (!res.ok) {
+      if (!res.ok || (closed && !data.assignment?.closedAt)) {
         setError(data.error || "Could not update conversation");
-        return;
-      }
-
-      const closedAt = data.assignment?.closedAt ?? null;
-      patchConversationClosed(selectedConversation.phone, closed, closedAt);
-      setError(null);
-
-      if (closed && !showClosed) {
-        setSelectedPhone(null);
-        if (isMobile) setMobilePane("list");
-      } else {
-        await fetchConversations();
+        pendingClosedRef.current.delete(normalized);
+        listCacheRef.current.clear();
+        setConversations((prev) => {
+          if (prev.some((c) => normalizePhone(c.phone) === normalized)) {
+            return prev.map((c) =>
+              normalizePhone(c.phone) === normalized ? previous : c
+            );
+          }
+          return sortConversations([previous, ...prev]);
+        });
+        setConversationTotal((total) => total + 1);
+        setSelectedPhone(phone);
       }
     } catch {
       setError("Network error while updating conversation.");
+      pendingClosedRef.current.delete(normalized);
+      listCacheRef.current.clear();
+      setConversations((prev) => {
+        if (prev.some((c) => normalizePhone(c.phone) === normalized)) return prev;
+        return sortConversations([previous, ...prev]);
+      });
+      setSelectedPhone(phone);
     } finally {
       setClosing(false);
     }
@@ -760,6 +1069,20 @@ export default function ChatApp() {
 
   const handleAssignConversation = async (userId: string) => {
     if (!selectedConversation || currentUser?.role !== "admin") return;
+
+    const member = userId ? teamMembers.find((m) => m.id === userId) : null;
+    const previousAssignment = {
+      assignedToUserId: selectedConversation.assignedToUserId,
+      assignedToName: selectedConversation.assignedToName,
+      assignedToEmail: selectedConversation.assignedToEmail,
+      assignedAt: selectedConversation.assignedAt,
+    };
+    patchConversationAssignment(selectedConversation.phone, {
+      assignedToUserId: member?.id ?? null,
+      assignedToName: member?.fullName ?? null,
+      assignedToEmail: member?.email ?? null,
+      assignedAt: member ? new Date().toISOString() : null,
+    });
 
     setAssigning(true);
     try {
@@ -774,6 +1097,7 @@ export default function ChatApp() {
       const data = await res.json();
 
       if (!res.ok) {
+        patchConversationAssignment(selectedConversation.phone, previousAssignment);
         setError(data.error || "Could not update assignment");
         return;
       }
@@ -811,10 +1135,27 @@ export default function ChatApp() {
     if (!selectedPhone || !replyText.trim() || sending || !canReply) return;
 
     const text = replyText.trim();
+    const tempSid = `local-${Date.now()}`;
     setSending(true);
     setError(null);
     setReplyText("");
     shouldAutoScrollRef.current = true;
+    setConversations((prev) =>
+      addMessageToConversations(
+        prev,
+        {
+          sid: tempSid,
+          from: "",
+          to: selectedPhone,
+          body: text,
+          dateCreated: new Date().toISOString(),
+          direction: "outbound",
+          status: "sending",
+        },
+        selectedPhone
+      )
+    );
+    requestAnimationFrame(() => scrollToBottom(true));
 
     try {
       const res = await apiFetch("/api/send", {
@@ -831,6 +1172,13 @@ export default function ChatApp() {
       if (!res.ok) {
         setReplyText(text);
         setError(data.error || "Failed to send message.");
+        setConversations((prev) =>
+          prev.map((c) =>
+            normalizePhone(c.phone) === normalizePhone(selectedPhone)
+              ? { ...c, messages: c.messages.filter((m) => m.sid !== tempSid) }
+              : c
+          )
+        );
         return;
       }
 
@@ -838,6 +1186,13 @@ export default function ChatApp() {
       if (result && !result.success) {
         setReplyText(text);
         setError(result.error || "Failed to send message.");
+        setConversations((prev) =>
+          prev.map((c) =>
+            normalizePhone(c.phone) === normalizePhone(selectedPhone)
+              ? { ...c, messages: c.messages.filter((m) => m.sid !== tempSid) }
+              : c
+          )
+        );
         return;
       }
 
@@ -853,7 +1208,15 @@ export default function ChatApp() {
         };
 
         setConversations((prev) =>
-          addMessageToConversations(prev, newMessage, result.to).map((c) =>
+          addMessageToConversations(
+            prev.map((c) =>
+              normalizePhone(c.phone) === normalizePhone(result.to)
+                ? { ...c, messages: c.messages.filter((m) => m.sid !== tempSid) }
+                : c
+            ),
+            newMessage,
+            result.to
+          ).map((c) =>
             normalizePhone(c.phone) === normalizePhone(result.to) && currentUser
               ? {
                   ...c,
@@ -870,6 +1233,13 @@ export default function ChatApp() {
     } catch {
       setReplyText(text);
       setError("Network error. Please try again.");
+      setConversations((prev) =>
+        prev.map((c) =>
+          normalizePhone(c.phone) === normalizePhone(selectedPhone)
+            ? { ...c, messages: c.messages.filter((m) => m.sid !== tempSid) }
+            : c
+        )
+      );
     } finally {
       setSending(false);
     }
@@ -918,6 +1288,7 @@ export default function ChatApp() {
             conversations={conversations}
             selectedPhone={selectedPhone}
             loading={loading}
+            refreshing={refreshing}
             loadingMore={loadingMoreList}
             hasMore={hasMoreConversations}
             showStopFilter={showStop && !showClosed}

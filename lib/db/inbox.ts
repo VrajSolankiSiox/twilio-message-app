@@ -190,17 +190,98 @@ async function persistInboxSummaries(
 }
 
 let cachedRows: ConversationAssignment[] | null = null;
+let cachedLatestMessageAt = 0;
+
+function stampOf(value: Date | undefined | null): number {
+  return value instanceof Date ? value.getTime() : 0;
+}
+
+function rememberLatest(rows: ConversationAssignment[]): void {
+  let latest = 0;
+  for (const row of rows) {
+    const at = stampOf(row.lastMessageAt);
+    if (at > latest) latest = at;
+  }
+  cachedLatestMessageAt = latest;
+}
+
+/** Newest summary in Mongo. The Next.js webhook writes this from another process. */
+async function latestStoredMessageAt(): Promise<number> {
+  const db = await getDb();
+  const newest = await db
+    .collection<ConversationAssignment>("conversations")
+    .findOne(
+      { lastMessageAt: { $type: "date" } },
+      { sort: { lastMessageAt: -1 }, projection: { lastMessageAt: 1 } }
+    );
+  return stampOf(newest?.lastMessageAt);
+}
 
 export function invalidateInboxCache(): void {
   cachedRows = null;
+  cachedLatestMessageAt = 0;
+}
+
+export function noteCachedMessage(
+  phone: string,
+  message: { body?: string; direction: "inbound" | "outbound"; dateCreated: Date },
+  inserted: boolean
+): void {
+  if (!cachedRows) return;
+  const normalized = normalizePhone(phone);
+  const inbound = message.direction === "inbound";
+  const previous = cachedRows.find((row) => normalizePhone(row.phone) === normalized);
+  const next: ConversationAssignment = {
+    ...(previous ?? {
+      phone: normalized,
+      contactName: null,
+      assignedToUserId: null,
+      assignedToName: null,
+      assignedToEmail: null,
+      assignedAt: null,
+      closedAt: inbound ? null : null,
+      closedByUserId: null,
+      closedByName: null,
+      updatedAt: new Date(),
+    }),
+    lastMessageAt: message.dateCreated,
+    lastBody: message.body || "",
+    lastDirection: message.direction,
+    hasInbound: Boolean(previous?.hasInbound) || inbound,
+    hasOutbound: Boolean(previous?.hasOutbound) || !inbound,
+    messageCount: (previous?.messageCount ?? 0) + (inserted ? 1 : 0),
+    updatedAt: new Date(),
+    ...(inbound ? { closedAt: null, closedByUserId: null, closedByName: null } : {}),
+  };
+  cachedRows = [
+    next,
+    ...cachedRows.filter((row) => normalizePhone(row.phone) !== normalized),
+  ];
+  const at = message.dateCreated.getTime();
+  if (at > cachedLatestMessageAt) cachedLatestMessageAt = at;
+}
+
+export function patchCachedConversation(
+  phone: string,
+  fields: Partial<ConversationAssignment>
+): void {
+  if (!cachedRows) return;
+  const normalized = normalizePhone(phone);
+  cachedRows = cachedRows.map((row) =>
+    normalizePhone(row.phone) === normalized ? { ...row, ...fields } : row
+  );
 }
 
 export async function listStoredConversations(): Promise<
   ConversationAssignment[]
 > {
-  if (cachedRows) return cachedRows;
+  if (cachedRows) {
+    const latest = await latestStoredMessageAt();
+    if (latest <= cachedLatestMessageAt) return cachedRows;
+  }
   const stored = await readStoredInbox();
   cachedRows = stored;
+  rememberLatest(stored);
   return stored;
 }
 
@@ -257,7 +338,7 @@ export async function recordMessageOnConversation(
       },
     }
   );
-  invalidateInboxCache();
+  noteCachedMessage(contactPhone, message, options.inserted);
 }
 
 export async function getConversationIdForPhone(

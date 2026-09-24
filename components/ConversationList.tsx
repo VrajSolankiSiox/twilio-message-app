@@ -23,6 +23,7 @@ interface ConversationListProps {
   conversations: Conversation[];
   selectedPhone: string | null;
   loading: boolean;
+  refreshing?: boolean;
   loadingMore?: boolean;
   hasMore?: boolean;
   showStopFilter: boolean;
@@ -36,6 +37,7 @@ export default function ConversationList({
   conversations,
   selectedPhone,
   loading,
+  refreshing = false,
   loadingMore = false,
   hasMore = false,
   showStopFilter,
@@ -162,6 +164,13 @@ export default function ConversationList({
       ref={listRef}
       className="inbox-list relative min-h-0 flex-1 overflow-x-hidden overflow-y-auto"
     >
+      {refreshing && conversations.length > 0 && (
+        <div className="inbox-refresh" role="status" aria-label="Updating conversations">
+          <span className="inbox-refresh-line" />
+          <span className="inbox-refresh-line" />
+        </div>
+      )}
+
       {loading && conversations.length === 0 && (
         <div className="flex items-center justify-center py-16">
           <div className="h-6 w-6 animate-spin rounded-full border-2 border-brand border-t-transparent" />
