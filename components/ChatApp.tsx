@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { apiFetch, getAuthToken, wsBase } from "@/lib/api-client";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import ConversationList from "@/components/ConversationList";
 import InboxFilters from "@/components/messages/InboxFilters";
 import NewContactComposer from "@/components/messages/NewContactComposer";
@@ -33,6 +33,8 @@ import {
   notifyInboundFromConversationUpdates,
   notifyInboundFromThreadMessages,
   setNotificationNavigateHandler,
+  shouldSuppressInboundNotification,
+  showInboundMessageNotification,
 } from "@/lib/browser-notifications";
 import { normalizeAppPathname } from "@/lib/navigation";
 
@@ -238,6 +240,7 @@ function addMessageToConversations(
 export default function ChatApp() {
   const router = useRouter();
   const pathname = usePathname();
+  const searchParams = useSearchParams();
   const relativeNow = useRelativeTimeClock();
   const voice = useVoiceCall();
   const isMobile = useIsMobile();
@@ -268,6 +271,9 @@ export default function ChatApp() {
   const loadingOlderRef = useRef(false);
   const selectedPhoneRef = useRef<string | null>(null);
   selectedPhoneRef.current = selectedPhone;
+  const conversationsRef = useRef<Conversation[]>([]);
+  conversationsRef.current = conversations;
+  const openInboxSnapshotRef = useRef<Conversation[] | null>(null);
   const inboxNotificationsReadyRef = useRef(false);
   const notifiedInboundKeysRef = useRef(new Set<string>());
   const threadCacheRef = useRef(
@@ -303,6 +309,13 @@ export default function ChatApp() {
     });
     return () => setNotificationNavigateHandler(null);
   }, [router]);
+
+  useEffect(() => {
+    const phone = searchParams.get("phone");
+    if (!phone || !isValidPhoneNumber(phone)) return;
+    setSelectedPhone(normalizePhone(phone));
+    setMobilePane("chat");
+  }, [searchParams]);
 
   useEffect(() => {
     voice.initialize();
@@ -799,6 +812,32 @@ export default function ChatApp() {
     let attempt = 0;
     let retryTimer: number | null = null;
 
+    const pollOpenInboxForNotifications = async () => {
+      try {
+        const params = new URLSearchParams({
+          page: "1",
+          limit: String(CONVERSATION_LIST_PAGE_SIZE),
+        });
+        const res = await apiFetch(`/api/twilio/messages?${params}`, {
+          cache: "no-store",
+        });
+        const data = await res.json();
+        if (!res.ok || !Array.isArray(data.conversations)) return;
+        const incoming = data.conversations as Conversation[];
+        const previous = openInboxSnapshotRef.current;
+        openInboxSnapshotRef.current = incoming;
+        if (!previous) return;
+        notifyInboundFromConversationUpdates(
+          previous,
+          incoming,
+          getNotificationContext(),
+          notifiedInboundKeysRef.current
+        );
+      } catch {
+        // The next poll retries.
+      }
+    };
+
     const connect = () => {
       if (stopped) return;
       const base = wsBase();
@@ -827,6 +866,22 @@ export default function ChatApp() {
           const direction = data.direction === "outbound" ? "outbound" : "inbound";
           const at = data.at || new Date().toISOString();
           const body = data.body || "";
+          if (phone && direction === "inbound" && !isStopMessage(body) && inboxNotificationsReadyRef.current) {
+            const dedupeKey = `${phone}:${at}`;
+            if (!notifiedInboundKeysRef.current.has(dedupeKey)) {
+              notifiedInboundKeysRef.current.add(dedupeKey);
+              if (!shouldSuppressInboundNotification(phone, getNotificationContext())) {
+                const existing = conversationsRef.current.find(
+                  (c) => normalizePhone(c.phone) === phone
+                );
+                showInboundMessageNotification({
+                  phone,
+                  title: existing ? conversationLabel(existing) : phone,
+                  body: body || "New message",
+                });
+              }
+            }
+          }
           if (phone) {
             const stop = direction === "inbound" && isStopMessage(body);
             pendingClosedRef.current.delete(phone);
@@ -910,12 +965,22 @@ export default function ChatApp() {
 
     connect();
 
+    const pollTimer = window.setInterval(() => {
+      if (!getAuthToken() || !inboxNotificationsReadyRef.current) return;
+      if (filterKeyRef.current.startsWith("true:")) {
+        void pollOpenInboxForNotifications();
+        return;
+      }
+      void fetchConversations({ page: 1, silent: true });
+    }, 12000);
+
     return () => {
       stopped = true;
       if (retryTimer !== null) window.clearTimeout(retryTimer);
+      window.clearInterval(pollTimer);
       socket?.close();
     };
-  }, [fetchConversations, loadThread]);
+  }, [fetchConversations, getNotificationContext, loadThread]);
 
   useEffect(() => {
     if (!selectedPhone) return;
