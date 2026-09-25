@@ -17,7 +17,9 @@ jobs:
           username: ${{ secrets.VM_USER }}
           key: ${{ secrets.VM_SSH_KEY }}
           script: |
+            whoami
+            sudo -n -l
             cd ~/revenelxapp/twilio-message-app
             git pull origin main
-            sudo systemctl restart revenelx-api
-            sudo systemctl is-active --quiet revenelx-api
+            sudo -n systemctl restart revenelx-api
+            sudo -n systemctl is-active revenelx-api
