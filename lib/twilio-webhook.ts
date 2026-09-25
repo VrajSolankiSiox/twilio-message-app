@@ -32,6 +32,24 @@ export function parseIncomingMessage(
   };
 }
 
+function candidateWebhookUrls(requestUrl: string): string[] {
+  const urls = new Set<string>();
+  if (requestUrl) urls.add(requestUrl);
+
+  const configured = process.env.TWILIO_WEBHOOK_URL?.trim();
+  if (!configured) return [...urls];
+
+  urls.add(configured);
+  try {
+    const request = new URL(requestUrl);
+    const base = new URL(configured);
+    urls.add(`${base.origin}${request.pathname}${request.search}`);
+  } catch {
+    // Keep the raw request URL when one of the values is not a URL.
+  }
+  return [...urls];
+}
+
 export function validateTwilioRequest(
   requestUrl: string,
   params: Record<string, string>,
@@ -39,12 +57,11 @@ export function validateTwilioRequest(
 ): boolean {
   const authToken = process.env.TWILIO_AUTH_TOKEN;
   if (!authToken) return true;
-
   if (!signature) return false;
 
-  const webhookUrl = process.env.TWILIO_WEBHOOK_URL || requestUrl;
-
-  return twilio.validateRequest(authToken, signature, webhookUrl, params);
+  return candidateWebhookUrls(requestUrl).some((url) =>
+    twilio.validateRequest(authToken, signature, url, params)
+  );
 }
 
 export function emptyTwimlResponse(): string {

@@ -5,6 +5,7 @@ import { apiFetch, getAuthToken, wsBase } from "@/lib/api-client";
 import { usePathname, useRouter } from "next/navigation";
 import ConversationList from "@/components/ConversationList";
 import InboxFilters from "@/components/messages/InboxFilters";
+import NewContactComposer from "@/components/messages/NewContactComposer";
 import MessageNotificationControls from "@/components/messages/MessageNotificationControls";
 import LiveCallBar from "@/components/LiveCallBar";
 import { useVoiceCall } from "@/components/VoiceCallProvider";
@@ -282,6 +283,7 @@ export default function ChatApp() {
     >()
   );
   const pendingClosedRef = useRef(new Map<string, Conversation>());
+  const pendingStartedRef = useRef(new Map<string, Conversation>());
   const filterKeyRef = useRef("0:0:0");
   filterKeyRef.current = `${showClosed}:${showStop}:${showBlank}`;
 
@@ -567,6 +569,21 @@ export default function ChatApp() {
     }
   };
 
+  const applyPendingStarted = useCallback(
+    (list: Conversation[], filterKey: string) => {
+      const [closed, , blank] = filterKey.split(":");
+      if (closed === "true" || blank !== "true" || pendingStartedRef.current.size === 0) {
+        return list;
+      }
+      const seen = new Set(list.map((c) => normalizePhone(c.phone)));
+      const extras = [...pendingStartedRef.current.values()].filter(
+        (c) => !seen.has(normalizePhone(c.phone))
+      );
+      return extras.length > 0 ? sortConversations([...extras, ...list]) : list;
+    },
+    []
+  );
+
   const applyPendingClosed = useCallback(
     (list: Conversation[], filterKey: string) => {
       const showingClosed = filterKey.startsWith("true:");
@@ -625,7 +642,13 @@ export default function ChatApp() {
         for (const conv of serverList) {
           if (conv.isClosed) pendingClosedRef.current.delete(normalizePhone(conv.phone));
         }
-        const visibleList = applyPendingClosed(serverList, requestKey);
+        for (const conv of serverList) {
+          pendingStartedRef.current.delete(normalizePhone(conv.phone));
+        }
+        const visibleList = applyPendingStarted(
+          applyPendingClosed(serverList, requestKey),
+          requestKey
+        );
         if (filterKeyRef.current === requestKey) {
           setHasMoreConversations(Boolean(data.hasMore));
           setConversationTotal(
@@ -650,11 +673,14 @@ export default function ChatApp() {
           });
         } else if (silent && filterKeyRef.current === requestKey) {
           setConversations((prev) => {
-            const next = applyPendingClosed(
-              mergeConversationList(
-                prev,
-                visibleList,
-                selectedPhoneRef.current
+            const next = applyPendingStarted(
+              applyPendingClosed(
+                mergeConversationList(
+                  prev,
+                  visibleList,
+                  selectedPhoneRef.current
+                ),
+                requestKey
               ),
               requestKey
             );
@@ -702,9 +728,10 @@ export default function ChatApp() {
           setSelectedPhone((prev) => {
             if (
               prev &&
-              (data.conversations as Conversation[]).some(
+              ((data.conversations as Conversation[]).some(
                 (c) => normalizePhone(c.phone) === normalizePhone(prev)
-              )
+              ) ||
+                pendingStartedRef.current.has(normalizePhone(prev)))
             ) {
               return prev;
             }
@@ -721,7 +748,7 @@ export default function ChatApp() {
         setLoadingMoreList(false);
       }
     },
-    [applyPendingClosed, getNotificationContext, showClosed, showStop, showBlank]
+    [applyPendingClosed, applyPendingStarted, getNotificationContext, showClosed, showStop, showBlank]
   );
 
   useLayoutEffect(() => {
@@ -741,16 +768,19 @@ export default function ChatApp() {
     const cached = listCacheRef.current.get(filterKeyRef.current);
     if (cached) {
       setConversations(
-        cached.conversations.map((conv) => {
-          const thread = threadCacheRef.current.get(normalizePhone(conv.phone));
-          if (!thread) return conv;
-          return {
-            ...conv,
-            messages: thread.messages,
-            hasOlderMessages: thread.hasOlderMessages,
-            messageCount: thread.messageCount ?? conv.messageCount,
-          };
-        })
+        applyPendingStarted(
+          cached.conversations.map((conv) => {
+            const thread = threadCacheRef.current.get(normalizePhone(conv.phone));
+            if (!thread) return conv;
+            return {
+              ...conv,
+              messages: thread.messages,
+              hasOlderMessages: thread.hasOlderMessages,
+              messageCount: thread.messageCount ?? conv.messageCount,
+            };
+          }),
+          filterKeyRef.current
+        )
       );
       setConversationTotal(cached.total);
       setHasMoreConversations(cached.hasMore);
@@ -761,7 +791,7 @@ export default function ChatApp() {
     setConversations([]);
     setLoading(true);
     void fetchConversations({ page: 1 });
-  }, [fetchConversations]);
+  }, [applyPendingStarted, fetchConversations]);
 
   useEffect(() => {
     let socket: WebSocket | null = null;
@@ -1130,6 +1160,102 @@ export default function ChatApp() {
     prevMessageCountRef.current = count;
   }, [selectedConversation?.messages, scrollToBottom]);
 
+  const handleCreateContact = async (input: {
+    name: string;
+    phone: string;
+    message: string;
+  }): Promise<string | null> => {
+    const phone = normalizePhone(input.phone);
+    if (!isValidPhoneNumber(phone)) return "Enter a valid phone number.";
+    const text = input.message.trim();
+    if (!text) return "Message is required.";
+
+    try {
+      const res = await apiFetch("/api/send", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message: text,
+          phoneNumbers: [phone],
+          ...(input.name.trim()
+            ? { contactNames: { [phone]: input.name.trim() } }
+            : {}),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) return data.error || "Failed to send message.";
+
+      const result = data.results?.[0];
+      if (!result?.success) return result?.error || "Failed to send message.";
+
+      const newMessage: ChatMessage = {
+        sid: result.sid,
+        from: result.from,
+        to: result.to,
+        body: result.body,
+        dateCreated: result.dateCreated,
+        direction: "outbound",
+        status: result.status,
+      };
+      const target = normalizePhone(result.to || phone);
+      const existing = conversations.find(
+        (c) => normalizePhone(c.phone) === target
+      );
+      const outboundOnly = !existing || existing.isBlank || existing.isClosed;
+
+      setConversations((prev) => {
+        const next = addMessageToConversations(prev, newMessage, target).map((c) => {
+          if (normalizePhone(c.phone) !== target) return c;
+          return {
+            ...c,
+            contactName: input.name.trim() || c.contactName,
+            isBlank: outboundOnly,
+            assignedToUserId: c.assignedToUserId ?? currentUser?.id ?? null,
+            assignedToName: c.assignedToName ?? currentUser?.fullName ?? null,
+            assignedToEmail: c.assignedToEmail ?? null,
+          };
+        });
+        const created = next.find((c) => normalizePhone(c.phone) === target);
+        if (created && outboundOnly) {
+          pendingStartedRef.current.set(target, { ...created, messages: [] });
+          threadCacheRef.current.set(target, {
+            messages: created.messages,
+            hasOlderMessages: false,
+            messageCount: created.messages.length,
+          });
+          const blankKey = "false:false:true";
+          const cached = listCacheRef.current.get(blankKey);
+          const rest = (cached?.conversations ?? []).filter(
+            (c) => normalizePhone(c.phone) !== target
+          );
+          listCacheRef.current.set(blankKey, {
+            conversations: sortConversations([
+              { ...created, messages: [] },
+              ...rest,
+            ]),
+            total: rest.length + 1,
+            hasMore: cached?.hasMore ?? false,
+          });
+          writeInboxStore(listCacheRef.current);
+        }
+        return next;
+      });
+      if (outboundOnly) {
+        setShowClosed(false);
+        setShowStop(false);
+        setShowBlank(true);
+      } else if (showClosed) {
+        setShowClosed(false);
+      }
+      setSelectedPhone(target);
+      setMobilePane("chat");
+      setError(null);
+      return null;
+    } catch {
+      return "Network error. Please try again.";
+    }
+  };
+
   const handleSendReply = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedPhone || !replyText.trim() || sending || !canReply) return;
@@ -1255,7 +1381,7 @@ export default function ChatApp() {
           }`}
         >
           <div className="shrink-0 space-y-3 border-b border-border px-4 py-3 sm:px-5 sm:py-4">
-            <div>
+            <NewContactComposer onCreate={handleCreateContact}>
               <h2 className="text-sm font-semibold text-foreground">
                 {showClosed ? "Closed" : "Inbox"}
               </h2>
@@ -1270,7 +1396,7 @@ export default function ChatApp() {
                   ? ` · showing ${conversations.length}`
                   : ""}
               </p>
-            </div>
+            </NewContactComposer>
             <div className="flex flex-wrap items-center justify-between gap-2">
               <InboxFilters
                 showClosed={showClosed}

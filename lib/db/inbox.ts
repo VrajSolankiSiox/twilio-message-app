@@ -191,6 +191,7 @@ async function persistInboxSummaries(
 
 let cachedRows: ConversationAssignment[] | null = null;
 let cachedLatestMessageAt = 0;
+const cachedMessageSids = new Set<string>();
 
 function stampOf(value: Date | undefined | null): number {
   return value instanceof Date ? value.getTime() : 0;
@@ -205,26 +206,35 @@ function rememberLatest(rows: ConversationAssignment[]): void {
   cachedLatestMessageAt = latest;
 }
 
-/** Newest summary in Mongo. The Next.js webhook writes this from another process. */
-async function latestStoredMessageAt(): Promise<number> {
+/** Messages written by the Vercel webhook that this process has not listed yet. */
+async function mongoHasUnlistedMessages(): Promise<boolean> {
   const db = await getDb();
-  const newest = await db
-    .collection<ConversationAssignment>("conversations")
-    .findOne(
-      { lastMessageAt: { $type: "date" } },
-      { sort: { lastMessageAt: -1 }, projection: { lastMessageAt: 1 } }
-    );
-  return stampOf(newest?.lastMessageAt);
+  const since = new Date(Math.max(0, cachedLatestMessageAt - 10 * 60 * 1000));
+  const recent = await db
+    .collection<StoredMessage>("messages")
+    .find({ dateCreated: { $gte: since } }, { projection: { sid: 1 } })
+    .sort({ dateCreated: -1 })
+    .limit(100)
+    .toArray();
+
+  if (recent.length === 0) return false;
+  return recent.some((message) => message.sid && !cachedMessageSids.has(message.sid));
 }
 
 export function invalidateInboxCache(): void {
   cachedRows = null;
   cachedLatestMessageAt = 0;
+  cachedMessageSids.clear();
 }
 
 export function noteCachedMessage(
   phone: string,
-  message: { body?: string; direction: "inbound" | "outbound"; dateCreated: Date },
+  message: {
+    sid?: string;
+    body?: string;
+    direction: "inbound" | "outbound";
+    dateCreated: Date;
+  },
   inserted: boolean
 ): void {
   if (!cachedRows) return;
@@ -259,6 +269,7 @@ export function noteCachedMessage(
   ];
   const at = message.dateCreated.getTime();
   if (at > cachedLatestMessageAt) cachedLatestMessageAt = at;
+  if (message.sid) cachedMessageSids.add(message.sid);
 }
 
 export function patchCachedConversation(
@@ -272,16 +283,29 @@ export function patchCachedConversation(
   );
 }
 
+async function rememberRecentMessageSids(): Promise<void> {
+  const db = await getDb();
+  const since = new Date(Math.max(0, cachedLatestMessageAt - 10 * 60 * 1000));
+  const recent = await db
+    .collection<StoredMessage>("messages")
+    .find({ dateCreated: { $gte: since } }, { projection: { sid: 1 } })
+    .sort({ dateCreated: -1 })
+    .limit(100)
+    .toArray();
+  cachedMessageSids.clear();
+  for (const message of recent) {
+    if (message.sid) cachedMessageSids.add(message.sid);
+  }
+}
+
 export async function listStoredConversations(): Promise<
   ConversationAssignment[]
 > {
-  if (cachedRows) {
-    const latest = await latestStoredMessageAt();
-    if (latest <= cachedLatestMessageAt) return cachedRows;
-  }
+  if (cachedRows && !(await mongoHasUnlistedMessages())) return cachedRows;
   const stored = await readStoredInbox();
   cachedRows = stored;
   rememberLatest(stored);
+  await rememberRecentMessageSids();
   return stored;
 }
 

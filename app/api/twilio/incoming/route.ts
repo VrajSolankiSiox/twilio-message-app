@@ -32,6 +32,7 @@ async function handleIncoming(
     });
   } catch (error) {
     console.error("Failed to save incoming message:", error);
+    return new NextResponse("Failed to store message", { status: 500 });
   }
 
   return new NextResponse(emptyTwimlResponse(), {
