@@ -259,6 +259,8 @@ export function noteCachedMessage(
     lastDirection: message.direction,
     hasInbound: Boolean(previous?.hasInbound) || inbound,
     hasOutbound: Boolean(previous?.hasOutbound) || !inbound,
+    hasStopInbound:
+      Boolean(previous?.hasStopInbound) || (inbound && isStopMessage(message.body || "")),
     messageCount: (previous?.messageCount ?? 0) + (inserted ? 1 : 0),
     updatedAt: new Date(),
     ...(inbound ? { closedAt: null, closedByUserId: null, closedByName: null } : {}),

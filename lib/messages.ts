@@ -182,7 +182,9 @@ export function buildConversationsFromStored(
     const lastMessageDirection: "inbound" | "outbound" =
       row.lastDirection === "inbound" ? "inbound" : "outbound";
     const lastReadAt = readsByPhone?.get(phone);
-    const isStop = Boolean(row.hasStopInbound);
+    const isStop =
+      Boolean(row.hasStopInbound) ||
+      (lastMessageDirection === "inbound" && isStopMessage(row.lastBody || ""));
     const unread =
       !isStop &&
       isConversationUnread(

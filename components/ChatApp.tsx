@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { apiFetch, getAuthToken, wsBase } from "@/lib/api-client";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import ConversationList from "@/components/ConversationList";
@@ -158,6 +158,7 @@ function mergeConversationList(
         messages: existing.messages,
         hasOlderMessages: existing.hasOlderMessages,
         messageCount: existing.messageCount ?? conv.messageCount,
+        isStop: existing.isStop || conv.isStop,
       };
       if (activeKey && key === activeKey) {
         merged.unread = false;
@@ -338,6 +339,19 @@ export default function ChatApp() {
         // Assignment dropdown stays empty until the next refresh.
       });
   }, [currentUser?.role]);
+
+  const inboxConversations = useMemo(() => {
+    return conversations.filter((conv) => {
+      if (showClosed) return conv.isClosed;
+      if (conv.isClosed) return false;
+      const stop =
+        conv.isStop ||
+        (conv.lastMessageDirection === "inbound" && isStopMessage(conv.lastMessage));
+      if (!showStop && stop) return false;
+      if (!showBlank && conv.isBlank) return false;
+      return true;
+    });
+  }, [conversations, showClosed, showStop, showBlank]);
 
   const selectedConversation = conversations.find(
     (c) => normalizePhone(c.phone) === normalizePhone(selectedPhone || "")
@@ -863,10 +877,17 @@ export default function ChatApp() {
           };
           if (data.type !== "message") return;
           const phone = data.phone ? normalizePhone(data.phone) : "";
-          const direction = data.direction === "outbound" ? "outbound" : "inbound";
-          const at = data.at || new Date().toISOString();
+          const direction = data.direction === "inbound" ? "inbound" : "outbound";
+          const at = data.at || "";
           const body = data.body || "";
-          if (phone && direction === "inbound" && !isStopMessage(body) && inboxNotificationsReadyRef.current) {
+          if (
+            phone &&
+            direction === "inbound" &&
+            body.trim() &&
+            at &&
+            !isStopMessage(body) &&
+            inboxNotificationsReadyRef.current
+          ) {
             const dedupeKey = `${phone}:${at}`;
             if (!notifiedInboundKeysRef.current.has(dedupeKey)) {
               notifiedInboundKeysRef.current.add(dedupeKey);
@@ -894,9 +915,9 @@ export default function ChatApp() {
                 ? {
                     ...existing,
                     lastMessage: body || existing.lastMessage,
-                    lastMessageAt: at,
-                    lastMessageDirection: direction,
-                    unread: direction === "inbound" && !stop && !viewing,
+                    lastMessageAt: at || existing.lastMessageAt,
+                    lastMessageDirection: body ? direction : existing.lastMessageDirection,
+                    unread: Boolean(body) && direction === "inbound" && !stop && !viewing,
                     isClosed: direction === "inbound" ? false : existing.isClosed,
                     closedAt: direction === "inbound" ? null : existing.closedAt,
                     isStop: existing.isStop || stop,
@@ -1451,14 +1472,14 @@ export default function ChatApp() {
                 {showClosed ? "Closed" : "Inbox"}
               </h2>
               <p className="text-xs text-zinc-400">
-                {conversationTotal > 0 ? conversationTotal : conversations.length}{" "}
+                {inboxConversations.length}{" "}
                 {showClosed ? "closed" : ""} conversation
-                {(conversationTotal > 0 ? conversationTotal : conversations.length) ===
+                {inboxConversations.length ===
                 1
                   ? ""
                   : "s"}
-                {hasMoreConversations && conversations.length < conversationTotal
-                  ? ` · showing ${conversations.length}`
+                {hasMoreConversations && inboxConversations.length < conversationTotal
+                  ? ` · showing ${inboxConversations.length}`
                   : ""}
               </p>
             </NewContactComposer>
@@ -1476,7 +1497,7 @@ export default function ChatApp() {
           </div>
 
           <ConversationList
-            conversations={conversations}
+            conversations={inboxConversations}
             selectedPhone={selectedPhone}
             loading={loading}
             refreshing={refreshing}

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { saveMessage } from "@/lib/db/messages";
+import { normalizePhone } from "@/lib/phone";
 import {
   emptyTwimlResponse,
   parseIncomingMessage,
@@ -17,6 +18,10 @@ async function handleIncoming(
   }
 
   const incoming = parseIncomingMessage(params);
+  const fromNumber = process.env.TWILIO_FROM_NUMBER?.trim() || "";
+  const sentByUs =
+    Boolean(fromNumber) &&
+    normalizePhone(incoming.from) === normalizePhone(fromNumber);
 
   try {
     await saveMessage({
@@ -24,7 +29,7 @@ async function handleIncoming(
       from: incoming.from,
       to: incoming.to,
       body: incoming.body,
-      direction: "inbound",
+      direction: sentByUs ? "outbound" : "inbound",
       status: "received",
       numMedia: String(incoming.numMedia),
       mediaUrls: incoming.mediaUrls,

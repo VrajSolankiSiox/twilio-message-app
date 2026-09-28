@@ -185,6 +185,7 @@ export function notifyInboundFromConversationUpdates(
 
     const phone = normalizePhone(conv.phone);
     const prev = prevByPhone.get(phone);
+    if (prev && prev.lastMessage === conv.lastMessage) continue;
     const prevAt = prev?.lastMessageAt
       ? new Date(prev.lastMessageAt).getTime()
       : 0;
