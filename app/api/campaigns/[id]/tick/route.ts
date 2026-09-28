@@ -10,7 +10,9 @@ import {
   heartbeatSendLock,
   markRecipientFailed,
   markRecipientSent,
+  markRecipientSkipped,
   nextPendingRecipients,
+  phonesAlreadyMessaged,
   requeueSentRecipientsForFollowUp,
   serializeCampaign,
 } from "@/lib/db/campaigns";
@@ -88,10 +90,28 @@ export async function POST(
 
   try {
     const batch = await nextPendingRecipients(id, CAMPAIGN_BATCH_SIZE);
+    const alreadyMessaged = skipAlreadySent
+      ? await phonesAlreadyMessaged(batch.map((recipient) => recipient.phone))
+      : new Set<string>();
 
     for (const recipient of batch) {
       const stillSending = await heartbeatSendLock(id, claim.lockToken);
       if (!stillSending) break;
+
+      if (alreadyMessaged.has(recipient.phone)) {
+        await markRecipientSkipped(
+          recipient._id,
+          "Already received a message from us"
+        );
+        processed.push({
+          phone: recipient.phone,
+          name: recipient.name,
+          status: "skipped",
+          error: "Already received a message from us",
+          updatedAt: new Date().toISOString(),
+        });
+        continue;
+      }
 
       try {
         const statusCallback = getMessageStatusCallbackUrl();

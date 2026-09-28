@@ -13,7 +13,7 @@ export type CampaignStatus =
   | "interrupted"
   | "completed";
 
-export type RecipientStatus = "pending" | "sent" | "failed";
+export type RecipientStatus = "pending" | "sent" | "failed" | "skipped";
 
 export interface CampaignSummary {
   id: string;
@@ -84,9 +84,12 @@ const RECIPIENT_ERROR_CODES = new Set([
   21635, 21268, 30005, 30006,
 ]);
 
-export function campaignProgress(campaign: Pick<CampaignSummary, "sent" | "failed" | "total">): number {
+export function campaignProgress(
+  campaign: Pick<CampaignSummary, "sent" | "failed" | "pending" | "total">
+): number {
   if (campaign.total <= 0) return 0;
-  return Math.min(100, Math.round(((campaign.sent + campaign.failed) / campaign.total) * 100));
+  const done = campaign.total - campaign.pending;
+  return Math.min(100, Math.round((done / campaign.total) * 100));
 }
 
 export function estimateSms(body: string): {

@@ -183,12 +183,12 @@ function SkipAlreadySentCheckbox({
       />
       <span className="min-w-0">
         <span className="block text-sm font-medium text-foreground">
-          Skip contacts who already received this message
+          Skip contacts who already received a message
         </span>
         <span className="mt-0.5 block text-xs leading-relaxed text-zinc-500">
           {checked
-            ? "Only remaining contacts are messaged when you resume."
-            : "Follow-up mode: contacts who were already sent will receive this message again."}
+            ? "Anyone who has already received any text from us is skipped."
+            : "Follow-up mode: contacts are messaged again, including people we have texted before."}
         </span>
       </span>
     </label>
@@ -1264,8 +1264,8 @@ export default function Campaigns() {
           </div>
           <p className="text-xs leading-relaxed text-zinc-400">
             Invalid numbers are marked failed and the rest of the campaign keeps going. When
-            the skip box is checked, resume only messages contacts who have not been sent yet.
-            Uncheck it to send follow-ups to everyone who already received this campaign.
+            the skip box is checked, anyone who has already received any text from us is not
+            messaged again. Uncheck it to send this campaign even to people we have texted before.
           </p>
         </>
       )}
@@ -1645,7 +1645,11 @@ function CampaignDetail({
               <div
                 key={`${item.phone}-${item.status}`}
                 className={`rounded-xl px-4 py-3 text-sm ${
-                  item.status === "failed" ? "bg-red-50" : "bg-emerald-50"
+                  item.status === "failed"
+                    ? "bg-red-50"
+                    : item.status === "skipped"
+                      ? "bg-zinc-50"
+                      : "bg-emerald-50"
                 }`}
               >
                 <div className="flex items-start justify-between gap-3">
@@ -1658,10 +1662,18 @@ function CampaignDetail({
                   <div className="shrink-0 text-right">
                     <span
                       className={`text-xs font-medium ${
-                        item.status === "failed" ? "text-red-600" : "text-emerald-700"
+                        item.status === "failed"
+                          ? "text-red-600"
+                          : item.status === "skipped"
+                            ? "text-zinc-500"
+                            : "text-emerald-700"
                       }`}
                     >
-                      {item.status === "failed" ? "Failed" : "Sent"}
+                      {item.status === "failed"
+                        ? "Failed"
+                        : item.status === "skipped"
+                          ? "Skipped"
+                          : "Sent"}
                     </span>
                     {item.priceUsd != null && item.priceUsd > 0 && (
                       <p className="text-[10px] tabular-nums text-zinc-500">
@@ -1670,7 +1682,11 @@ function CampaignDetail({
                     )}
                   </div>
                 </div>
-                {item.error && <p className="mt-1 text-xs text-red-600">{item.error}</p>}
+                {item.error && (
+                  <p className={`mt-1 text-xs ${item.status === "skipped" ? "text-zinc-500" : "text-red-600"}`}>
+                    {item.error}
+                  </p>
+                )}
               </div>
             ))}
           </div>

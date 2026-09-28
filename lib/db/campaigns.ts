@@ -185,12 +185,13 @@ export function prepareContacts(
 
 async function countsFor(campaignId: ObjectId) {
   const col = await recipients();
-  const [sent, failed, pending] = await Promise.all([
+  const [sent, failed, pending, skipped] = await Promise.all([
     col.countDocuments({ campaignId, status: "sent" }),
     col.countDocuments({ campaignId, status: "failed" }),
     col.countDocuments({ campaignId, status: "pending" }),
+    col.countDocuments({ campaignId, status: "skipped" }),
   ]);
-  return { sent, failed, pending, total: sent + failed + pending };
+  return { sent, failed, pending, total: sent + failed + pending + skipped };
 }
 
 export async function reconcileStaleCampaigns(): Promise<void> {
@@ -556,6 +557,47 @@ export async function nextPendingRecipients(
     .sort({ index: 1 })
     .limit(limit)
     .toArray();
+}
+
+export async function phonesAlreadyMessaged(phones: string[]): Promise<Set<string>> {
+  const normalized = [...new Set(phones.map((phone) => normalizePhone(phone)).filter(Boolean))];
+  if (normalized.length === 0) return new Set();
+
+  const db = await getDb();
+  const rows = await db
+    .collection<{ to?: string; contactPhone?: string }>("messages")
+    .find(
+      {
+        direction: "outbound",
+        $or: [{ to: { $in: normalized } }, { contactPhone: { $in: normalized } }],
+      },
+      { projection: { to: 1, contactPhone: 1 } }
+    )
+    .toArray();
+
+  const found = new Set<string>();
+  for (const row of rows) {
+    if (row.to) found.add(normalizePhone(row.to));
+    if (row.contactPhone) found.add(normalizePhone(row.contactPhone));
+  }
+  return found;
+}
+
+export async function markRecipientSkipped(
+  recipientId: ObjectId,
+  reason: string
+): Promise<void> {
+  const col = await recipients();
+  await col.updateOne(
+    { _id: recipientId },
+    {
+      $set: {
+        status: "skipped",
+        error: reason,
+        updatedAt: new Date(),
+      },
+    }
+  );
 }
 
 export async function markRecipientSent(
