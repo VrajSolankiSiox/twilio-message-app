@@ -32,6 +32,7 @@ import {
   resolveTabFromPathname,
   tabToPath,
 } from "@/lib/navigation";
+import { invoiceViewFromPath } from "@/lib/invoice-navigation";
 
 export interface CurrentUser {
   id: string;
@@ -50,7 +51,7 @@ export default function Dashboard() {
   const [, startTransition] = useTransition();
   const activeTab = pendingTab ?? routeTab;
   const [mountedTabs, setMountedTabs] = useState<Set<NavTab>>(
-    () => new Set([routeTab])
+    () => new Set([routeTab]),
   );
   const [callPrefillPhone, setCallPrefillPhone] = useState<string | null>(null);
 
@@ -100,6 +101,7 @@ export default function Dashboard() {
   };
 
   const isAdmin = user?.role === "admin";
+  const invoiceView = invoiceViewFromPath(pathname);
 
   const pageTitles: Record<NavTab, string> = {
     messages: "Messages",
@@ -107,10 +109,17 @@ export default function Dashboard() {
     campaign: "Campaigns",
     cost: "Cost & Usage",
     team: isAdmin ? "Team Management" : "Teams",
-    invoices: "Invoice Generator",
+    invoices:
+      invoiceView === "list"
+        ? "Saved Invoices"
+        : invoiceView === "create"
+          ? "Add Invoice"
+          : "Edit Invoice",
   };
 
   useEffect(() => {
+    if (!sessionReady || !user) return;
+
     const canonicalPath = normalizeAppPathname(pathname);
     if (canonicalPath !== pathname) {
       router.replace(canonicalPath);
@@ -129,7 +138,7 @@ export default function Dashboard() {
       router.replace("/messages");
       return;
     }
-  }, [isAdmin, pathname, router, routeTab]);
+  }, [isAdmin, pathname, router, routeTab, sessionReady, user]);
 
   const handleTabChange = (tab: NavTab) => {
     if (tab === activeTab) return;
@@ -164,14 +173,12 @@ export default function Dashboard() {
         <div className="flex min-w-0 flex-1 flex-col overflow-hidden pb-[calc(3.5rem+env(safe-area-inset-bottom))] lg:pb-0">
           <header className="flex shrink-0 items-center justify-between gap-3 border-b border-border bg-surface px-4 py-3 sm:px-6 sm:py-4">
             <div className="flex min-w-0 flex-1 items-center gap-2.5">
-              <h1
-                className="truncate text-base font-semibold text-foreground sm:text-lg"
-              >
+              <h1 className="truncate text-base font-semibold text-foreground sm:text-lg">
                 {pageTitles[activeTab]}
               </h1>
-              {activeTab === "cost" && (
+              {/* {activeTab === "cost" && (
                 <span className={APP_TESTING_BADGE}>Testing only</span>
-              )}
+              )} */}
             </div>
             <div className="flex shrink-0 items-center gap-2 lg:hidden">
               {user && (

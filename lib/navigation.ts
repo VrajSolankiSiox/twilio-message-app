@@ -13,6 +13,11 @@ export function isCampaignAppPath(pathname: string): boolean {
   return path === "/campaign" || path.startsWith("/campaign/");
 }
 
+export function isInvoiceAppPath(pathname: string): boolean {
+  const path = normalizeAppPathname(pathname);
+  return path === "/invoices" || path.startsWith("/invoices/");
+}
+
 export const TAB_ORDER: NavTab[] = [
   "messages",
   "calls",
@@ -49,12 +54,15 @@ export function pathnameToTab(pathname: string): NavTab | null {
   if (isCampaignAppPath(canonicalPath)) {
     return "campaign";
   }
+  if (isInvoiceAppPath(canonicalPath)) {
+    return "invoices";
+  }
   const entry = Object.entries(TAB_ROUTES).find(([, path]) => path === canonicalPath);
   return entry ? (entry[0] as NavTab) : null;
 }
 
 export function resolveTabFromPathname(pathname: string): NavTab {
-  return pathnameToTab(pathname) ?? (isCampaignAppPath(pathname) ? "campaign" : "messages");
+  return pathnameToTab(pathname) ?? "messages";
 }
 
 export function isAdminTab(tab: NavTab | LegacyNavTab): boolean {

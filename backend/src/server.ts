@@ -53,13 +53,13 @@ function listen() {
 
 type RouteHandler = (
   request: NextRequest,
-  context?: { params: Promise<Record<string, string>> }
+  context: { params: Promise<Record<string, string>> }
 ) => Promise<Response> | Response;
 
 interface Route {
   method: string;
   pattern: RegExp;
-  load: () => Promise<Record<string, RouteHandler>>;
+  load: () => Promise<Record<string, unknown>>;
   params: (match: RegExpMatchArray) => Record<string, string>;
 }
 
@@ -89,6 +89,10 @@ const routes: Route[] = [
   route("GET", /^\/api\/cost\/summary$/, () => import("@/app/api/cost/summary/route")),
   route("GET", /^\/api\/cost\/usage$/, () => import("@/app/api/cost/usage/route")),
   route("GET", /^\/api\/cost\/campaigns$/, () => import("@/app/api/cost/campaigns/route")),
+  route("GET", /^\/api\/invoices$/, () => import("@/app/api/invoices/route")),
+  route("POST", /^\/api\/invoices$/, () => import("@/app/api/invoices/route")),
+  route("PUT", /^\/api\/invoices\/([^/]+)$/, () => import("@/app/api/invoices/[id]/route"), (m) => ({ id: m[1] })),
+  route("DELETE", /^\/api\/invoices\/([^/]+)$/, () => import("@/app/api/invoices/[id]/route"), (m) => ({ id: m[1] })),
   route("GET", /^\/api\/campaigns$/, () => import("@/app/api/campaigns/route")),
   route("POST", /^\/api\/campaigns$/, () => import("@/app/api/campaigns/route")),
   route("GET", /^\/api\/campaigns\/([^/]+)\/recipients$/, () => import("@/app/api/campaigns/[id]/recipients/route"), (m) => ({ id: m[1] })),
@@ -103,7 +107,7 @@ const routes: Route[] = [
 function route(
   method: string,
   pattern: RegExp,
-  load: () => Promise<Record<string, RouteHandler>>,
+  load: () => Promise<Record<string, unknown>>,
   params: (match: RegExpMatchArray) => Record<string, string> = () => ({})
 ): Route {
   return { method, pattern, load, params };
@@ -206,13 +210,13 @@ async function handleHttp(req: IncomingMessage, res: ServerResponse) {
   try {
     const mod = await match.load();
     const handler = mod[req.method];
-    if (!handler) {
+    if (typeof handler !== "function") {
       res.writeHead(405, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ error: "Method not allowed" }));
       return;
     }
     const response = await requestContext.run({ token }, () =>
-      handler(request, { params: Promise.resolve(params) })
+      (handler as RouteHandler)(request, { params: Promise.resolve(params) })
     );
     const payload = Buffer.from(await response.arrayBuffer());
     response.headers.forEach((value, key) => {

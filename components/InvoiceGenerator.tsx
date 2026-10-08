@@ -1,6 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
+import { usePathname, useRouter } from "next/navigation";
 import {
   calculateInvoiceTotal,
   defaultInvoiceData,
@@ -10,8 +12,18 @@ import {
   INVOICE_LOGO_FALLBACK,
   INVOICE_LOGO_PATH,
 } from "@/lib/invoice/constants";
-import type { InvoiceData, InvoiceLineItem } from "@/lib/invoice/types";
+import type {
+  InvoiceData,
+  InvoiceLineItem,
+  SavedInvoice,
+} from "@/lib/invoice/types";
 import { APP_INPUT, APP_LABEL, APP_SECTION_LG, APP_SECTION_TITLE } from "@/lib/app-layout";
+import { apiFetch } from "@/lib/api-client";
+import {
+  INVOICE_ROUTES,
+  invoiceDetailIdFromPath,
+  invoiceViewFromPath,
+} from "@/lib/invoice-navigation";
 
 function Section({
   title,
@@ -28,12 +40,114 @@ function Section({
   );
 }
 
+function cloneInvoiceData(data: InvoiceData): InvoiceData {
+  return {
+    ...data,
+    lineItems: data.lineItems.map((item) => ({ ...item })),
+  };
+}
+
+function defaultSavedName(data: InvoiceData): string {
+  const customer = data.billToCompany.trim() || data.billToName.trim();
+  return [customer, data.servicePeriod.trim()].filter(Boolean).join(" — ") ||
+    "Untitled invoice";
+}
+
+function formatUpdatedAt(value: string): string {
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(new Date(value));
+}
+
 export default function InvoiceGenerator() {
-  const [form, setForm] = useState<InvoiceData>(defaultInvoiceData);
+  const pathname = usePathname();
+  const router = useRouter();
+  const view = invoiceViewFromPath(pathname);
+  const detailId = invoiceDetailIdFromPath(pathname);
+  const [form, setForm] = useState<InvoiceData>(() =>
+    cloneInvoiceData(defaultInvoiceData)
+  );
+  const [savedInvoices, setSavedInvoices] = useState<SavedInvoice[]>([]);
+  const [selectedInvoiceId, setSelectedInvoiceId] = useState<string | null>(null);
+  const [savedName, setSavedName] = useState("");
+  const [savedSnapshot, setSavedSnapshot] = useState<InvoiceData | null>(null);
+  const [loadingSaved, setLoadingSaved] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
+  const initializedPath = useRef<string | null>(null);
 
   const total = calculateInvoiceTotal(form.lineItems);
+
+  useEffect(() => {
+    let cancelled = false;
+    apiFetch("/api/invoices")
+      .then(async (response) => {
+        const result = await response.json();
+        if (!response.ok) {
+          throw new Error(result.error || "Failed to load saved invoices");
+        }
+        if (!cancelled) setSavedInvoices(result.invoices ?? []);
+      })
+      .catch((loadError) => {
+        if (!cancelled) {
+          setError(
+            loadError instanceof Error
+              ? loadError.message
+              : "Failed to load saved invoices"
+          );
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingSaved(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (initializedPath.current === pathname) return;
+    initializedPath.current = pathname;
+    if (view !== "create") return;
+    setSelectedInvoiceId(null);
+    setSavedName("");
+    setSavedSnapshot(null);
+    setForm(cloneInvoiceData(defaultInvoiceData));
+    setError(null);
+    setSuccess(null);
+  }, [pathname, view]);
+
+  useEffect(() => {
+    if (
+      view === "detail" &&
+      detailId &&
+      !loadingSaved &&
+      selectedInvoiceId !== detailId
+    ) {
+      const invoice = savedInvoices.find((item) => item.id === detailId);
+      if (!invoice) return;
+      const data = cloneInvoiceData(invoice.data);
+      setSelectedInvoiceId(invoice.id);
+      setSavedName(invoice.name);
+      setSavedSnapshot(cloneInvoiceData(data));
+      setForm(data);
+      setError(null);
+      setSuccess(null);
+    }
+  }, [
+    detailId,
+    loadingSaved,
+    savedInvoices,
+    selectedInvoiceId,
+    view,
+  ]);
 
   const updateField = <K extends keyof InvoiceData>(
     key: K,
@@ -79,6 +193,105 @@ export default function InvoiceGenerator() {
     }));
   };
 
+  const startNewInvoice = () => {
+    setSelectedInvoiceId(null);
+    setSavedName("");
+    setSavedSnapshot(null);
+    setForm(cloneInvoiceData(defaultInvoiceData));
+    setError(null);
+    setSuccess(null);
+    router.push(INVOICE_ROUTES.new);
+  };
+
+  const handleReset = () => {
+    setForm(
+      cloneInvoiceData(selectedInvoiceId && savedSnapshot
+        ? savedSnapshot
+        : defaultInvoiceData)
+    );
+    setSuccess(null);
+  };
+
+  const handleSave = async () => {
+    const name = savedName.trim() || defaultSavedName(form);
+    setSaving(true);
+    setError(null);
+    setSuccess(null);
+
+    try {
+      const response = await apiFetch(
+        selectedInvoiceId
+          ? `/api/invoices/${selectedInvoiceId}`
+          : "/api/invoices",
+        {
+          method: selectedInvoiceId ? "PUT" : "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name, data: form }),
+        }
+      );
+      const result = await response.json();
+      if (!response.ok) {
+        throw new Error(result.error || "Failed to save invoice");
+      }
+
+      const invoice = result.invoice as SavedInvoice;
+      setSelectedInvoiceId(invoice.id);
+      setSavedName(invoice.name);
+      setSavedSnapshot(cloneInvoiceData(invoice.data));
+      setSavedInvoices((current) => [
+        invoice,
+        ...current.filter((item) => item.id !== invoice.id),
+      ]);
+      setSuccess(
+        selectedInvoiceId
+          ? "Invoice changes saved."
+          : "Invoice configuration saved."
+      );
+      router.push(INVOICE_ROUTES.list);
+    } catch (saveError) {
+      setError(
+        saveError instanceof Error
+          ? saveError.message
+          : "Failed to save invoice"
+      );
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDelete = async (invoice: SavedInvoice) => {
+    if (
+      !window.confirm(
+        `Delete "${invoice.name}"? This saved invoice cannot be recovered.`
+      )
+    ) {
+      return;
+    }
+
+    setDeletingId(invoice.id);
+    setError(null);
+    try {
+      const response = await apiFetch(`/api/invoices/${invoice.id}`, {
+        method: "DELETE",
+      });
+      const result = await response.json();
+      if (!response.ok) {
+        throw new Error(result.error || "Failed to delete invoice");
+      }
+      setSavedInvoices((current) =>
+        current.filter((item) => item.id !== invoice.id)
+      );
+    } catch (deleteError) {
+      setError(
+        deleteError instanceof Error
+          ? deleteError.message
+          : "Failed to delete invoice"
+      );
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
   const handleGenerate = async () => {
     setGenerating(true);
     setError(null);
@@ -114,8 +327,187 @@ export default function InvoiceGenerator() {
     }
   };
 
+  if (view === "list") {
+    return (
+      <div className="space-y-6">
+        <header className="flex flex-col gap-4 border-b border-border pb-6 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <p className="max-w-lg text-sm leading-relaxed text-zinc-500">
+              Open a saved invoice to update its values, or add a new invoice for
+              another billing period.
+            </p>
+            {!loadingSaved && savedInvoices.length > 0 && (
+              <p className="mt-2 text-xs font-medium text-zinc-400">
+                {savedInvoices.length} saved invoice
+                {savedInvoices.length === 1 ? "" : "s"}
+              </p>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={startNewInvoice}
+            className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-brand px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-brand-hover"
+          >
+            <span className="text-lg leading-none" aria-hidden>+</span>
+            Add invoice
+          </button>
+        </header>
+
+        {error && (
+          <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+            {error}
+          </div>
+        )}
+
+        {loadingSaved ? (
+          <div className="space-y-3">
+            {[1, 2, 3].map((item) => (
+              <div
+                key={item}
+                className="h-24 animate-pulse rounded-xl border border-border bg-brand-muted/30"
+              />
+            ))}
+          </div>
+        ) : savedInvoices.length === 0 ? (
+          <div className="rounded-2xl border border-dashed border-border bg-surface px-6 py-12 text-center">
+            <h2 className="text-base font-semibold text-foreground">
+              No saved invoices yet
+            </h2>
+            <p className="mt-1 text-sm text-zinc-500">
+              Add your first invoice and save it for future billing periods.
+            </p>
+            <button
+              type="button"
+              onClick={startNewInvoice}
+              className="mt-5 rounded-xl bg-brand px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand-hover"
+            >
+              Add invoice
+            </button>
+          </div>
+        ) : (
+          <div className="overflow-hidden rounded-2xl border border-border bg-surface shadow-sm">
+            <div className="divide-y divide-border">
+              {savedInvoices.map((invoice) => (
+                <div
+                  key={invoice.id}
+                  className="flex flex-col gap-4 p-4 sm:flex-row sm:items-center sm:justify-between sm:px-5"
+                >
+                  <div className="min-w-0">
+                    <h2 className="truncate text-sm font-semibold text-foreground">
+                      {invoice.name}
+                    </h2>
+                    <p className="mt-1 truncate text-sm text-zinc-500">
+                      {invoice.data.billToCompany ||
+                        invoice.data.billToName ||
+                        "No customer"}
+                      {invoice.data.servicePeriod
+                        ? ` · ${invoice.data.servicePeriod}`
+                        : ""}
+                    </p>
+                    <p className="mt-1 text-xs text-zinc-400">
+                      Updated {formatUpdatedAt(invoice.updatedAt)} ·{" "}
+                      {formatCurrency(
+                        calculateInvoiceTotal(invoice.data.lineItems)
+                      )}
+                    </p>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => handleDelete(invoice)}
+                      disabled={deletingId === invoice.id}
+                      className="inline-flex items-center justify-center rounded-xl border border-red-200 px-4 py-2 text-sm font-semibold text-red-600 transition-colors hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {deletingId === invoice.id ? "Deleting..." : "Delete"}
+                    </button>
+                    <Link
+                      href={INVOICE_ROUTES.detail(invoice.id)}
+                      className="inline-flex items-center justify-center rounded-xl border border-brand px-4 py-2 text-sm font-semibold text-brand transition-colors hover:bg-brand-muted"
+                    >
+                      Edit
+                    </Link>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  if (view === "detail" && loadingSaved) {
+    return (
+      <div className="space-y-4">
+        <div className="h-8 w-64 animate-pulse rounded-lg bg-brand-muted" />
+        <div className="h-48 animate-pulse rounded-2xl bg-brand-muted/40" />
+      </div>
+    );
+  }
+
+  if (
+    view === "detail" &&
+    !savedInvoices.some((invoice) => invoice.id === detailId)
+  ) {
+    return (
+      <div className="rounded-2xl border border-border bg-surface p-8 text-center shadow-sm">
+        <h2 className="text-lg font-semibold text-foreground">
+          Invoice not found
+        </h2>
+        <p className="mt-2 text-sm text-zinc-500">
+          This invoice may have been removed or belongs to another user.
+        </p>
+        <Link
+          href={INVOICE_ROUTES.list}
+          className="mt-5 inline-flex rounded-xl bg-brand px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand-hover"
+        >
+          Back to saved invoices
+        </Link>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
+      <header className="space-y-4 border-b border-border pb-6">
+        <nav className="flex items-center gap-2 text-sm" aria-label="Breadcrumb">
+          <Link
+            href={INVOICE_ROUTES.list}
+            className="font-medium text-zinc-500 transition-colors hover:text-brand"
+          >
+            Saved invoices
+          </Link>
+          <span className="text-zinc-300" aria-hidden>/</span>
+          <span className="truncate font-medium text-foreground">
+            {view === "create" ? "Add invoice" : savedName || "Edit invoice"}
+          </span>
+        </nav>
+        <div>
+          <h1 className="text-xl font-semibold tracking-tight text-foreground sm:text-2xl">
+            {view === "create" ? "Add invoice" : "Edit invoice"}
+          </h1>
+          <p className="mt-1 text-sm text-zinc-500">
+            {view === "create"
+              ? "Enter the invoice values, then save the configuration for future use."
+              : "Update the saved values or generate a new PDF from this configuration."}
+          </p>
+        </div>
+      </header>
+
+      <Section title="Configuration">
+        <div className="max-w-lg">
+          <label className={APP_LABEL}>Invoice name</label>
+          <input
+            type="text"
+            value={savedName}
+            maxLength={120}
+            onChange={(event) => setSavedName(event.target.value)}
+            className={APP_INPUT}
+            placeholder={defaultSavedName(form)}
+          />
+        </div>
+      </Section>
+
       <Section title="Invoice Details">
         <div className="grid gap-4 sm:grid-cols-3">
           <div>
@@ -389,10 +781,22 @@ export default function InvoiceGenerator() {
         <div className="flex flex-col gap-3 sm:flex-row">
           <button
             type="button"
-            onClick={() => setForm(defaultInvoiceData)}
+            onClick={handleReset}
             className="rounded-xl border border-border px-5 py-2.5 text-sm font-medium text-zinc-600 transition-colors hover:bg-brand-muted"
           >
             Reset
+          </button>
+          <button
+            type="button"
+            onClick={handleSave}
+            disabled={saving}
+            className="rounded-xl border border-brand bg-white px-5 py-2.5 text-sm font-semibold text-brand transition-colors hover:bg-brand-muted disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {saving
+              ? "Saving..."
+              : selectedInvoiceId
+                ? "Save changes"
+                : "Save configuration"}
           </button>
           <button
             type="button"
@@ -408,6 +812,11 @@ export default function InvoiceGenerator() {
       {error && (
         <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
           {error}
+        </div>
+      )}
+      {success && (
+        <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
+          {success}
         </div>
       )}
     </div>

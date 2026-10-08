@@ -24,3 +24,11 @@ export interface InvoiceData {
   paymentInstructions: string;
   notes: string;
 }
+
+export interface SavedInvoice {
+  id: string;
+  name: string;
+  data: InvoiceData;
+  createdAt: string;
+  updatedAt: string;
+}
