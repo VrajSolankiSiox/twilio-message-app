@@ -13,7 +13,10 @@ import {
   type RecipientView,
 } from "@/lib/campaigns";
 import { getTwilioClient } from "@/lib/twilio-client";
-import { pricingFromTwilioMessage } from "@/lib/twilio-cost";
+import {
+  DEFAULT_SMS_SEGMENT_USD,
+  pricingFromTwilioMessage,
+} from "@/lib/twilio-cost";
 import { getDb } from "@/lib/mongodb";
 import { normalizePhone } from "@/lib/phone";
 
@@ -95,7 +98,18 @@ async function ensureIndexes() {
   await campaigns.createIndex({ status: 1, lockUntil: 1 });
   await recipients.createIndex({ campaignId: 1, status: 1, index: 1 });
   await recipients.createIndex({ campaignId: 1, index: 1 }, { unique: true });
+  await recipients.createIndex({ phone: 1, status: 1, updatedAt: 1 });
   indexesEnsured = true;
+}
+
+function unpricedRecipientPriceFilter() {
+  return {
+    $or: [
+      { priceUsd: null },
+      { priceUsd: { $exists: false } },
+      { priceUsd: 0 },
+    ],
+  };
 }
 
 function campaigns() {
@@ -667,6 +681,12 @@ export async function getCampaignCostSummary(
   } else if (pricedSentCount > 0 && unpricedSentCount > 0) {
     const avg = totalCostUsd / pricedSentCount;
     estimatedCostUsd = totalCostUsd + avg * unpricedSentCount;
+  } else if (pricedSentCount === 0 && unpricedSentCount > 0) {
+    const segments =
+      totalSegments > 0 ? totalSegments : sentRows.length;
+    if (segments > 0) {
+      estimatedCostUsd = segments * DEFAULT_SMS_SEGMENT_USD;
+    }
   }
 
   return {
@@ -699,7 +719,7 @@ export async function syncCampaignMessagePrices(
       campaignId: _id,
       status: "sent",
       sid: { $ne: null },
-      $or: [{ priceUsd: null }, { priceUsd: { $exists: false } }],
+      ...unpricedRecipientPriceFilter(),
     })
     .limit(limit)
     .toArray();
@@ -731,10 +751,115 @@ export async function syncCampaignMessagePrices(
     campaignId: _id,
     status: "sent",
     sid: { $ne: null },
-    $or: [{ priceUsd: null }, { priceUsd: { $exists: false } }],
+    ...unpricedRecipientPriceFilter(),
   });
 
   return { updated, remaining };
+}
+
+export async function updateCampaignRecipientPricingBySid(
+  sid: string,
+  pricing: {
+    priceUsd: number | null;
+    numSegments: number | null;
+    priceUnit: string | null;
+  }
+): Promise<void> {
+  if (!sid) return;
+  await ensureIndexes();
+  const col = await recipients();
+  const set: Record<string, unknown> = { updatedAt: new Date() };
+  if (pricing.priceUsd != null && pricing.priceUsd > 0) {
+    set.priceUsd = pricing.priceUsd;
+  }
+  if (pricing.numSegments != null && pricing.numSegments > 0) {
+    set.numSegments = pricing.numSegments;
+  }
+  if (pricing.priceUnit) {
+    set.priceUnit = pricing.priceUnit;
+  }
+  if (Object.keys(set).length === 1) return;
+
+  await col.updateOne({ sid, status: "sent" }, { $set: set });
+}
+
+export async function getOriginatingCampaignMap(
+  phones: string[]
+): Promise<Map<string, { id: string; name: string }>> {
+  await ensureIndexes();
+  const { isValidPhoneNumber, normalizePhone } = await import("@/lib/phone");
+  const normalized = [
+    ...new Set(
+      phones.map((phone) => normalizePhone(phone)).filter(isValidPhoneNumber)
+    ),
+  ];
+  const map = new Map<string, { id: string; name: string }>();
+  if (normalized.length === 0) return map;
+
+  const db = await getDb();
+  const convRows = await db
+    .collection<{
+      phone: string;
+      originatingCampaignId?: string | null;
+      originatingCampaignName?: string | null;
+    }>("conversations")
+    .find(
+      {
+        phone: { $in: normalized },
+        originatingCampaignId: { $exists: true, $nin: [null, ""] },
+      },
+      {
+        projection: {
+          phone: 1,
+          originatingCampaignId: 1,
+          originatingCampaignName: 1,
+        },
+      }
+    )
+    .toArray();
+
+  for (const row of convRows) {
+    const id = row.originatingCampaignId?.trim();
+    const name = row.originatingCampaignName?.trim();
+    if (id && name) {
+      map.set(normalizePhone(row.phone), { id, name });
+    }
+  }
+
+  const missing = normalized.filter((phone) => !map.has(phone));
+  if (missing.length === 0) return map;
+
+  const recipientCol = await recipients();
+  const grouped = await recipientCol
+    .aggregate<{ _id: string; campaignId: ObjectId }>([
+      { $match: { phone: { $in: missing }, status: "sent" } },
+      { $sort: { updatedAt: 1 } },
+      { $group: { _id: "$phone", campaignId: { $first: "$campaignId" } } },
+    ])
+    .toArray();
+
+  if (grouped.length === 0) return map;
+
+  const campaignCol = await campaigns();
+  const campaignDocs = await campaignCol
+    .find({
+      _id: { $in: grouped.map((row) => row.campaignId) },
+    })
+    .project({ name: 1 })
+    .toArray();
+  const nameById = new Map(
+    campaignDocs.map((doc) => [doc._id.toString(), doc.name])
+  );
+
+  for (const row of grouped) {
+    const id = row.campaignId.toString();
+    const name = nameById.get(id);
+    if (name) {
+      map.set(normalizePhone(row._id), { id, name });
+    }
+  }
+
+  return map;
 }
 
 export async function listCampaignCostRows(

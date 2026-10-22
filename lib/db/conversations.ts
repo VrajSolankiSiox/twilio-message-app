@@ -22,6 +22,8 @@ export interface ConversationAssignment {
   closedByName: string | null;
   hasStopInbound?: boolean;
   hasNonStopInbound?: boolean;
+  originatingCampaignId?: string | null;
+  originatingCampaignName?: string | null;
   updatedAt: Date;
 }
 
@@ -200,6 +202,39 @@ export async function setConversationClosed(
   const result = await col.updateOne({ _id: existing._id }, { $set: fields });
   if (result.matchedCount !== 1) return null;
   return { ...existing, ...fields };
+}
+
+export async function stampOriginatingCampaign(
+  phone: string,
+  campaignId: string,
+  campaignName: string
+): Promise<void> {
+  await ensureIndexes();
+  const normalized = normalizePhone(phone);
+  if (!isValidPhoneNumber(normalized)) return;
+  const id = campaignId.trim();
+  const name = campaignName.trim();
+  if (!id || !name) return;
+
+  await ensureConversationExists(normalized);
+  const db = await getDb();
+  await db.collection<ConversationAssignment>("conversations").updateOne(
+    {
+      phone: normalized,
+      $or: [
+        { originatingCampaignId: { $exists: false } },
+        { originatingCampaignId: null },
+        { originatingCampaignId: "" },
+      ],
+    },
+    {
+      $set: {
+        originatingCampaignId: id,
+        originatingCampaignName: name,
+        updatedAt: new Date(),
+      },
+    }
+  );
 }
 
 export async function reopenConversationIfClosed(phone: string): Promise<void> {

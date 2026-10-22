@@ -43,6 +43,7 @@ export interface Conversation {
   closedAt: string | null;
   messageCount?: number;
   hasOlderMessages?: boolean;
+  originatingCampaign?: { id: string; name: string } | null;
 }
 
 export function conversationLabel(conversation: Conversation): string {
@@ -167,6 +168,8 @@ export function buildConversationsFromStored(
     closedAt?: Date | null;
     hasStopInbound?: boolean;
     hasNonStopInbound?: boolean;
+    originatingCampaignId?: string | null;
+    originatingCampaignName?: string | null;
     lastMessageAt?: Date;
     lastBody?: string;
     lastDirection?: "inbound" | "outbound";
@@ -211,6 +214,13 @@ export function buildConversationsFromStored(
       isClosed: Boolean(row.closedAt),
       closedAt: row.closedAt?.toISOString() ?? null,
       messageCount: row.messageCount,
+      originatingCampaign:
+        row.originatingCampaignId && row.originatingCampaignName
+          ? {
+              id: row.originatingCampaignId,
+              name: row.originatingCampaignName,
+            }
+          : null,
     };
   });
 

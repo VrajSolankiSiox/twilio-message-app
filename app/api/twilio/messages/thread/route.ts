@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
+import { getOriginatingCampaignMap } from "@/lib/db/campaigns";
 import { getAssignment } from "@/lib/db/conversations";
 import { getMessagesForContact } from "@/lib/db/messages";
 import { MESSAGE_THREAD_PAGE_SIZE } from "@/lib/messaging";
@@ -25,6 +26,13 @@ function conversationFromAssignment(
     hasNonStopInbound: Boolean(assignment?.hasNonStopInbound),
     isClosed: Boolean(assignment?.closedAt),
     closedAt: assignment?.closedAt?.toISOString() ?? null,
+    originatingCampaign:
+      assignment?.originatingCampaignId && assignment?.originatingCampaignName
+        ? {
+            id: assignment.originatingCampaignId,
+            name: assignment.originatingCampaignName,
+          }
+        : null,
   };
 }
 
@@ -75,7 +83,21 @@ export async function GET(request: NextRequest) {
       { before, limit }
     );
 
-    return NextResponse.json({ messages, hasMore, totalCount });
+    const origins = await getOriginatingCampaignMap([normalized]);
+    const stored =
+      assignment?.originatingCampaignId && assignment?.originatingCampaignName
+        ? {
+            id: assignment.originatingCampaignId,
+            name: assignment.originatingCampaignName,
+          }
+        : origins.get(normalized) ?? null;
+
+    return NextResponse.json({
+      messages,
+      hasMore,
+      totalCount,
+      originatingCampaign: stored,
+    });
   } catch (err) {
     return NextResponse.json(
       {

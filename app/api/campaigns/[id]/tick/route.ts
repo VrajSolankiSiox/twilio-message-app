@@ -3,7 +3,10 @@ import { requireAdmin } from "@/lib/auth";
 import { getTwilioClient, twilioConfigured } from "@/lib/twilio-client";
 import { pricingFromTwilioMessage } from "@/lib/twilio-cost";
 import { CAMPAIGN_BATCH_SIZE, classifySendError, cleanErrorMessage, type RecipientView, type TickStopReason } from "@/lib/campaigns";
-import { upsertContactNames } from "@/lib/db/conversations";
+import {
+  stampOriginatingCampaign,
+  upsertContactNames,
+} from "@/lib/db/conversations";
 import {
   claimCampaignForSend,
   finishSendTick,
@@ -135,6 +138,11 @@ export async function POST(
           recipient._id,
           msg.sid,
           pricingFromTwilioMessage(msg)
+        );
+        await stampOriginatingCampaign(
+          recipient.phone,
+          claim.campaign._id.toString(),
+          claim.campaign.name
         );
 
         if (recipient.name) {

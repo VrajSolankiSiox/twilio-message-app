@@ -1,3 +1,6 @@
+/** Fallback when Twilio has not priced messages yet (US SMS, per segment). */
+export const DEFAULT_SMS_SEGMENT_USD = 0.0079;
+
 /** Twilio reports charges as negative strings; store positive USD amounts. */
 export function parseTwilioPrice(
   price: string | number | null | undefined

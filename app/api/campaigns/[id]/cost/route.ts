@@ -23,9 +23,18 @@ export async function GET(
   }
 
   const { id } = await context.params;
-  const cost = await getCampaignCostSummary(id);
+  let cost = await getCampaignCostSummary(id);
   if (!cost) {
     return NextResponse.json({ error: "Campaign not found" }, { status: 404 });
+  }
+
+  if (cost.unpricedSentCount > 0 && twilioConfigured()) {
+    try {
+      await syncCampaignMessagePrices(id, 100);
+      cost = (await getCampaignCostSummary(id)) ?? cost;
+    } catch {
+      // Return the last known summary if Twilio sync fails.
+    }
   }
 
   return NextResponse.json({ cost });

@@ -17,10 +17,15 @@ function validateMongoUri(uri: string): void {
 }
 
 function getClient(): MongoClient {
-  // Prefer MONGODB_URI_STANDARD on networks that block SRV DNS lookups (common on Windows)
+  const srvUri = process.env.MONGODB_URI?.trim();
+  const standardUri = process.env.MONGODB_URI_STANDARD?.trim();
+
+  // Atlas SRV is the preferred production connection. The standard seed-list
+  // URI remains first locally because some Windows DNS setups block SRV lookups.
   const uri =
-    process.env.MONGODB_URI_STANDARD?.trim() ||
-    process.env.MONGODB_URI?.trim();
+    process.env.NODE_ENV === "production"
+      ? srvUri || standardUri
+      : standardUri || srvUri;
 
   if (!uri) {
     throw new Error(

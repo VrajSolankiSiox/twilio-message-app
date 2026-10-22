@@ -313,6 +313,14 @@ export default function ConversationList({
                     Closed
                   </span>
                 )}
+                {conv.originatingCampaign ? (
+                  <span
+                    className="max-w-full truncate rounded-md bg-violet-50 px-1.5 py-0.5 text-[10px] font-medium text-violet-700"
+                    title={conv.originatingCampaign.name}
+                  >
+                    {conv.originatingCampaign.name}
+                  </span>
+                ) : null}
                 {conv.assignedToName ? (
                   <span className="rounded-md bg-white/80 px-1.5 py-0.5 text-[10px] font-medium text-brand">
                     {conv.assignedToName}

@@ -9,7 +9,9 @@ import NewContactComposer from "@/components/messages/NewContactComposer";
 import MessageNotificationControls from "@/components/messages/MessageNotificationControls";
 import LiveCallBar from "@/components/LiveCallBar";
 import { useVoiceCall } from "@/components/VoiceCallProvider";
+import Link from "next/link";
 import { useIsMobile } from "@/hooks/useIsMobile";
+import { CAMPAIGN_ROUTES } from "@/lib/campaign-navigation";
 import { highlightStopWithOtherReply } from "@/lib/filters";
 import { formatOutboundMessageStatus } from "@/lib/message-status";
 import { isStopMessage } from "@/lib/stop";
@@ -515,6 +517,9 @@ export default function ChatApp() {
               messageCount: data.totalCount,
               hasOlderMessages: data.hasMore,
               hasNonStopInbound,
+              ...(data.originatingCampaign
+                ? { originatingCampaign: data.originatingCampaign }
+                : {}),
               ...(latest && {
                 lastMessage: latest.body || "(media)",
                 lastMessageAt: latest.dateCreated,
@@ -1598,6 +1603,25 @@ export default function ChatApp() {
                         </>
                       )}
                     </p>
+                    {selectedConversation.originatingCampaign && (
+                      <p className="mt-0.5 truncate text-[11px] text-zinc-500">
+                        Started from campaign:{" "}
+                        {currentUser?.role === "admin" ? (
+                          <Link
+                            href={CAMPAIGN_ROUTES.detail(
+                              selectedConversation.originatingCampaign.id
+                            )}
+                            className="font-medium text-brand hover:underline"
+                          >
+                            {selectedConversation.originatingCampaign.name}
+                          </Link>
+                        ) : (
+                          <span className="font-medium text-zinc-600">
+                            {selectedConversation.originatingCampaign.name}
+                          </span>
+                        )}
+                      </p>
+                    )}
                   </div>
 
                   <div className="flex shrink-0 items-center gap-1">

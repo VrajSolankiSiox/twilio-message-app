@@ -352,10 +352,16 @@ export default function CostDashboard() {
       </section>
 
       <section className="overflow-hidden rounded-2xl border border-border bg-surface shadow-sm">
-        <div className="flex items-center justify-between border-b border-border px-4 py-3 sm:px-5">
-          <h2 className="text-sm font-semibold text-foreground">
-            Campaign spend
-          </h2>
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-3 sm:px-5">
+          <div>
+            <h2 className="text-sm font-semibold text-foreground">
+              Campaign spend (actual)
+            </h2>
+            <p className="mt-0.5 text-xs text-zinc-500">
+              Sum of Twilio prices already synced—excludes pending messages. See
+              each campaign for estimated cost.
+            </p>
+          </div>
           <button
             type="button"
             onClick={() => void loadCampaigns()}
@@ -369,8 +375,8 @@ export default function CostDashboard() {
           <div className="h-32 animate-pulse bg-brand-muted/30" />
         ) : campaignRows.length === 0 ? (
           <p className="px-5 py-10 text-center text-sm text-zinc-500">
-            No campaign sends with pricing yet. Open a campaign and refresh
-            costs after messages finish sending.
+            No campaign sends with Twilio prices yet. Open a campaign for
+            estimated totals or refresh after messages finish sending.
           </p>
         ) : (
           <ul className="divide-y divide-border">
@@ -391,11 +397,16 @@ export default function CostDashboard() {
                         : ""}
                     </p>
                   </div>
-                  <p className="shrink-0 text-sm font-semibold tabular-nums text-foreground">
-                    {row.totalCostUsd > 0
-                      ? formatMoney(row.totalCostUsd, "USD")
-                      : "—"}
-                  </p>
+                  <div className="shrink-0 text-right">
+                    <p className="text-[10px] font-medium uppercase tracking-wide text-zinc-400">
+                      Actual
+                    </p>
+                    <p className="text-sm font-semibold tabular-nums text-foreground">
+                      {row.totalCostUsd > 0
+                        ? formatMoney(row.totalCostUsd, "USD")
+                        : "—"}
+                    </p>
+                  </div>
                 </Link>
               </li>
             ))}

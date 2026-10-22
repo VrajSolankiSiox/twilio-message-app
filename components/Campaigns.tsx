@@ -18,6 +18,9 @@ import {
   campaignProgress,
   canResumeCampaign,
   estimateSms,
+  campaignCostSectionTitle,
+  campaignDisplayCostUsd,
+  isCampaignCostEstimate,
   type CampaignCostSummary,
   type CampaignStatus,
   type CampaignSummary,
@@ -406,7 +409,7 @@ export default function Campaigns() {
       setCampaignCost(null);
       return;
     }
-    void loadCampaignCost(routeDetailId);
+    void loadCampaignCost(routeDetailId, true);
   }, [view, routeDetailId, loadCampaignCost]);
 
   useEffect(() => {
@@ -1398,12 +1401,8 @@ function CampaignDetail({
   const resumable = canResumeCampaign(campaign, skipAlreadySent) && !sending;
   const latest = deliveryItems[0];
 
-  const displayCost =
-    cost && cost.estimatedCostUsd != null && cost.unpricedSentCount > 0
-      ? cost.estimatedCostUsd
-      : cost?.totalCostUsd ?? 0;
-  const costIsEstimate =
-    Boolean(cost && cost.unpricedSentCount > 0 && cost.pricedSentCount > 0);
+  const costIsEstimate = Boolean(cost && isCampaignCostEstimate(cost));
+  const displayCost = cost ? campaignDisplayCostUsd(cost) : 0;
 
   return (
     <div className="space-y-4">
@@ -1411,7 +1410,7 @@ function CampaignDetail({
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <p className="text-xs font-medium uppercase tracking-wide text-zinc-400">
-              Campaign cost
+              {campaignCostSectionTitle(cost)}
             </p>
             {costLoading && !cost ? (
               <div className="mt-2 h-8 w-24 animate-pulse rounded-lg bg-brand-muted" />
@@ -1420,19 +1419,34 @@ function CampaignDetail({
                 {cost && (cost.totalCostUsd > 0 || cost.sentCount > 0)
                   ? formatMoney(displayCost, cost.currency)
                   : "—"}
-                {costIsEstimate && (
-                  <span className="ml-2 text-xs font-normal text-zinc-500">est.</span>
-                )}
               </p>
             )}
             {cost && (
-              <p className="mt-1 text-xs text-zinc-500">
-                {cost.pricedSentCount} priced
-                {cost.unpricedSentCount > 0
-                  ? ` · ${cost.unpricedSentCount} pending Twilio price`
-                  : ""}
-                {cost.totalSegments > 0 ? ` · ${cost.totalSegments} segments` : ""}
-              </p>
+              <div className="mt-1 space-y-0.5 text-xs text-zinc-500">
+                {costIsEstimate ? (
+                  <p>
+                    Projected total until every sent message has a Twilio
+                    price. Not your final invoice amount.
+                  </p>
+                ) : (
+                  <p>Total from Twilio-reported prices for all sent messages.</p>
+                )}
+                {costIsEstimate && cost.totalCostUsd > 0 && (
+                  <p>
+                    Actual cost (priced messages only):{" "}
+                    <span className="font-medium tabular-nums text-foreground">
+                      {formatMoney(cost.totalCostUsd, cost.currency)}
+                    </span>
+                  </p>
+                )}
+                <p>
+                  {cost.pricedSentCount} priced
+                  {cost.unpricedSentCount > 0
+                    ? ` · ${cost.unpricedSentCount} pending Twilio price`
+                    : ""}
+                  {cost.totalSegments > 0 ? ` · ${cost.totalSegments} segments` : ""}
+                </p>
+              </div>
             )}
           </div>
           <button

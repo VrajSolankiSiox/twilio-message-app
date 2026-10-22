@@ -168,3 +168,25 @@ export function canResumeCampaign(
 
   return false;
 }
+
+/** True when the UI should show projected spend, not Twilio-final totals. */
+export function isCampaignCostEstimate(cost: CampaignCostSummary): boolean {
+  return (
+    cost.estimatedCostUsd != null &&
+    (cost.unpricedSentCount > 0 || cost.totalCostUsd === 0)
+  );
+}
+
+export function campaignDisplayCostUsd(cost: CampaignCostSummary): number {
+  if (isCampaignCostEstimate(cost) && cost.estimatedCostUsd != null) {
+    return cost.estimatedCostUsd;
+  }
+  return cost.totalCostUsd;
+}
+
+export function campaignCostSectionTitle(
+  cost: CampaignCostSummary | null
+): string {
+  if (!cost || cost.sentCount === 0) return "Campaign cost";
+  return isCampaignCostEstimate(cost) ? "Estimated cost" : "Actual cost";
+}

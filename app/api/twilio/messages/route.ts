@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
 import { getConversationReadsForUser } from "@/lib/db/conversation-reads";
+import { getOriginatingCampaignMap } from "@/lib/db/campaigns";
 import { listStoredConversations } from "@/lib/db/inbox";
+import { normalizePhone } from "@/lib/phone";
 import { applyConversationFilters } from "@/lib/filters";
 import { CONVERSATION_LIST_PAGE_SIZE } from "@/lib/messaging";
 import {
@@ -58,8 +60,18 @@ export async function GET(request: NextRequest) {
 
     const total = filtered.length;
     const start = (page - 1) * limit;
-    const conversations = filtered.slice(start, start + limit);
+    let conversations = filtered.slice(start, start + limit);
     const hasMore = start + conversations.length < total;
+
+    const origins = await getOriginatingCampaignMap(
+      conversations.map((conv) => conv.phone)
+    );
+    conversations = conversations.map((conv) => {
+      const fromRow = conv.originatingCampaign;
+      if (fromRow?.id) return conv;
+      const origin = origins.get(normalizePhone(conv.phone));
+      return origin ? { ...conv, originatingCampaign: origin } : conv;
+    });
 
     return NextResponse.json({
       conversations,

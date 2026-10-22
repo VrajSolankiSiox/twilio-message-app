@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
+import { updateCampaignRecipientPricingBySid } from "@/lib/db/campaigns";
 import { updateMessageStatus } from "@/lib/db/messages";
+import { pricingFromTwilioMessage } from "@/lib/twilio-cost";
 import { validateTwilioRequest } from "@/lib/twilio-webhook";
 
 function formDataToRecord(formData: FormData): Record<string, string> {
@@ -24,6 +26,14 @@ async function handleMessageStatus(
 
   if (sid && status) {
     await updateMessageStatus(sid, status);
+    const pricing = pricingFromTwilioMessage({
+      price: params.Price ?? params.price,
+      priceUnit: params.PriceUnit ?? params.priceUnit,
+      numSegments: params.NumSegments ?? params.numSegments,
+    });
+    if (pricing.priceUsd != null || pricing.numSegments != null) {
+      await updateCampaignRecipientPricingBySid(sid, pricing);
+    }
   }
 
   return new NextResponse("OK", { status: 200 });
