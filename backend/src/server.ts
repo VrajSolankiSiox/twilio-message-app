@@ -4,6 +4,11 @@ import { resolve } from "node:path";
 import { WebSocketServer, type WebSocket } from "ws";
 import { NextRequest } from "next/server";
 import { tokenFromHeaders, verifySessionToken } from "@/lib/auth";
+import {
+  ensureOrganizations,
+  scheduleHeavyDataMigration,
+} from "@/lib/db/organizations";
+import { runWithOrganizationId } from "@/lib/org-context";
 import { subscribeRealtime, type RealtimeEvent } from "@/lib/realtime";
 import { requestContext } from "@/lib/request-context";
 
@@ -28,27 +33,35 @@ function loadEnvFile(filePath: string) {
 }
 
 loadEnvFile(resolve(process.cwd(), "backend/.env"));
+loadEnvFile(resolve(process.cwd(), "backend/.env.local"));
 loadEnvFile(resolve(process.cwd(), ".env"));
 loadEnvFile(resolve(process.cwd(), ".env.local"));
 
 const PORT = Number(process.env.PORT || process.env.API_PORT || 4000);
 const HOST = process.env.HOST?.trim() || "localhost";
 
+function onServerReady() {
+  console.log(`API listening on http://localhost:${PORT}`);
+  void ensureOrganizations()
+    .then(() => {
+      setTimeout(() => scheduleHeavyDataMigration(), 15_000);
+    })
+    .catch((error) => {
+      console.error("API startup org sync failed:", error);
+    });
+}
+
 function listen() {
   const local =
     HOST === "localhost" || HOST === "127.0.0.1" || HOST === "::1";
 
   if (!local) {
-    server.listen(PORT, HOST, () => {
-      console.log(`API listening on http://${HOST}:${PORT}`);
-    });
+    server.listen(PORT, HOST, onServerReady);
     return;
   }
 
   // localhost on Windows is often ::1, while 127.0.0.1 is IPv4 only.
-  server.listen({ port: PORT, host: "::", ipv6Only: false }, () => {
-    console.log(`API listening on http://localhost:${PORT}`);
-  });
+  server.listen({ port: PORT, host: "::", ipv6Only: false }, onServerReady);
 }
 
 type RouteHandler = (
@@ -80,6 +93,8 @@ const routes: Route[] = [
   route("GET", /^\/api\/twilio\/token$/, () => import("@/app/api/twilio/token/route")),
   route("GET", /^\/api\/twilio\/incoming$/, () => import("@/app/api/twilio/incoming/route")),
   route("POST", /^\/api\/twilio\/incoming$/, () => import("@/app/api/twilio/incoming/route")),
+  route("GET", /^\/api\/twilio\/incomingcall$/, () => import("@/app/api/twilio/incomingcall/route")),
+  route("POST", /^\/api\/twilio\/incomingcall$/, () => import("@/app/api/twilio/incomingcall/route")),
   route("GET", /^\/api\/twilio\/voice$/, () => import("@/app/api/twilio/voice/route")),
   route("POST", /^\/api\/twilio\/voice$/, () => import("@/app/api/twilio/voice/route")),
   route("GET", /^\/api\/twilio\/call-status$/, () => import("@/app/api/twilio/call-status/route")),
@@ -157,11 +172,18 @@ async function readBody(req: IncomingMessage): Promise<Buffer> {
   return Buffer.concat(chunks);
 }
 
-const sockets = new Set<WebSocket>();
+const sockets = new Map<WebSocket, string>();
 
 function broadcast(event: RealtimeEvent) {
   const payload = JSON.stringify(event);
-  for (const socket of sockets) {
+  for (const [socket, organizationId] of sockets) {
+    if (
+      event.organizationId &&
+      organizationId &&
+      event.organizationId !== organizationId
+    ) {
+      continue;
+    }
     if (socket.readyState === socket.OPEN) {
       socket.send(payload);
     }
@@ -202,10 +224,15 @@ async function handleHttp(req: IncomingMessage, res: ServerResponse) {
     headers: req.headers as HeadersInit,
     body: body && body.length > 0 ? new Uint8Array(body) : undefined,
   });
+  const isLoginPost =
+    req.method === "POST" && url.pathname === "/api/auth/login";
   const token = tokenFromHeaders(
     request.headers.get("authorization"),
     request.headers.get("cookie")
   );
+  const session =
+    !isLoginPost && token ? await verifySessionToken(token) : null;
+  const organizationId = session?.organizationId ?? null;
 
   try {
     const mod = await match.load();
@@ -215,8 +242,14 @@ async function handleHttp(req: IncomingMessage, res: ServerResponse) {
       res.end(JSON.stringify({ error: "Method not allowed" }));
       return;
     }
-    const response = await requestContext.run({ token }, () =>
-      (handler as RouteHandler)(request, { params: Promise.resolve(params) })
+    const invoke = () =>
+      (handler as RouteHandler)(request, { params: Promise.resolve(params) });
+    const response = await requestContext.run(
+      { token, organizationId },
+      () =>
+        organizationId
+          ? runWithOrganizationId(organizationId, invoke)
+          : invoke()
     );
     const payload = Buffer.from(await response.arrayBuffer());
     response.headers.forEach((value, key) => {
@@ -260,7 +293,7 @@ server.on("upgrade", (req, socket, head) => {
       return;
     }
     wss.handleUpgrade(req, socket, head, (ws) => {
-      sockets.add(ws);
+      sockets.set(ws, session.organizationId);
       ws.send(JSON.stringify({ type: "ready" }));
       ws.on("close", () => sockets.delete(ws));
       ws.on("error", () => sockets.delete(ws));

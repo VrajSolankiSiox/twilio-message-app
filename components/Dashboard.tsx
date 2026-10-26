@@ -39,6 +39,8 @@ export interface CurrentUser {
   fullName: string;
   email: string;
   role: "admin" | "employee";
+  organizationId: string;
+  organizationName: string;
 }
 
 export default function Dashboard() {
@@ -218,7 +220,7 @@ export default function Dashboard() {
               mounted={isTabMounted("messages")}
               className="flex min-h-0 flex-col overflow-hidden"
             >
-              <ChatApp />
+              <ChatApp organizationId={user?.organizationId ?? ""} />
             </TabPanel>
 
             <TabPanel

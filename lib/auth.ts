@@ -1,16 +1,30 @@
 import { SignJWT, jwtVerify } from "jose";
 import { cookies, headers } from "next/headers";
-import { findUserById, User, UserRole, verifyUserPassword } from "@/lib/db/users";
+import {
+  ORGANIZATION_GREEN_ID,
+  getOrganizationById,
+} from "@/lib/db/organizations";
+import { getDb } from "@/lib/mongodb";
+import {
+  findUserById,
+  User,
+  UserRole,
+  verifyUserPasswordForLogin,
+} from "@/lib/db/users";
 import { requestContext } from "@/lib/request-context";
 
 const SESSION_COOKIE = "session";
-const SESSION_DURATION = "7d";
+/** JWT and session cookie lifetime for logged-in users. */
+export const SESSION_MAX_AGE_SECONDS = 7 * 24 * 60 * 60;
+const SESSION_DURATION = `${SESSION_MAX_AGE_SECONDS}s`;
 
 export interface SessionUser {
   userId: string;
   email: string;
   role: UserRole;
   fullName: string;
+  organizationId: string;
+  organizationName: string;
 }
 
 function getSecret() {
@@ -27,15 +41,27 @@ export async function authenticateUser(
   email: string,
   password: string
 ): Promise<User | null> {
-  return verifyUserPassword(email.trim(), password);
+  return verifyUserPasswordForLogin(email.trim(), password);
+}
+
+async function organizationNameForUser(user: User): Promise<string> {
+  const orgId = user.organizationId ?? ORGANIZATION_GREEN_ID;
+  const db = await getDb();
+  const org = await db
+    .collection<{ _id: string; name?: string }>("organizations")
+    .findOne({ _id: orgId }, { projection: { name: 1 } });
+  return org?.name ?? "Organization";
 }
 
 export async function createSessionToken(user: User): Promise<string> {
+  const organizationName = await organizationNameForUser(user);
   return new SignJWT({
     userId: user._id.toString(),
     email: user.email,
     role: user.role,
     fullName: user.fullName,
+    organizationId: user.organizationId ?? ORGANIZATION_GREEN_ID,
+    organizationName,
   })
     .setProtectedHeader({ alg: "HS256" })
     .setIssuedAt()
@@ -57,11 +83,27 @@ export async function verifySessionToken(
       return null;
     }
 
+    let organizationId =
+      typeof payload.organizationId === "string" ? payload.organizationId : "";
+    let organizationName =
+      typeof payload.organizationName === "string"
+        ? payload.organizationName
+        : "";
+
+    if (!organizationId) {
+      const user = await findUserById(payload.userId);
+      if (!user) return null;
+      organizationId = user.organizationId;
+      organizationName = await organizationNameForUser(user);
+    }
+
     return {
       userId: payload.userId,
       email: payload.email,
       role: payload.role as UserRole,
       fullName: payload.fullName,
+      organizationId,
+      organizationName,
     };
   } catch {
     return null;

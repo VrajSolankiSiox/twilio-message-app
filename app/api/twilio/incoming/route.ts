@@ -1,6 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { saveMessage } from "@/lib/db/messages";
+import { resolveOrganizationForInboundSms } from "@/lib/db/customer-org-lock";
+import { runWithOrganizationId } from "@/lib/org-context";
 import { normalizePhone } from "@/lib/phone";
+import {
+  handleInboundVoiceRequest,
+  isTwilioVoiceWebhook,
+} from "@/lib/twilio-inbound-voice";
 import {
   emptyTwimlResponse,
   parseIncomingMessage,
@@ -17,24 +23,43 @@ async function handleIncoming(
     return new NextResponse("Forbidden", { status: 403 });
   }
 
+  if (isTwilioVoiceWebhook(params)) {
+    try {
+      return await handleInboundVoiceRequest(params);
+    } catch (error) {
+      console.error("Inbound voice error:", error);
+      return new NextResponse(emptyTwimlResponse(), {
+        status: 200,
+        headers: { "Content-Type": "text/xml" },
+      });
+    }
+  }
+
   const incoming = parseIncomingMessage(params);
-  const fromNumber = process.env.TWILIO_FROM_NUMBER?.trim() || "";
+  const org = await resolveOrganizationForInboundSms(incoming.from, incoming.to);
+  if (!org) {
+    return new NextResponse("Organization not configured", { status: 500 });
+  }
+
+  const orgFrom = org.twilioFromNumber ?? "";
   const sentByUs =
-    Boolean(fromNumber) &&
-    normalizePhone(incoming.from) === normalizePhone(fromNumber);
+    Boolean(orgFrom) &&
+    normalizePhone(incoming.from) === normalizePhone(orgFrom);
 
   try {
-    await saveMessage({
-      sid: incoming.messageSid,
-      from: incoming.from,
-      to: incoming.to,
-      body: incoming.body,
-      direction: sentByUs ? "outbound" : "inbound",
-      status: "received",
-      numMedia: String(incoming.numMedia),
-      mediaUrls: incoming.mediaUrls,
-      dateCreated: new Date(),
-    });
+    await runWithOrganizationId(org._id, () =>
+      saveMessage({
+        sid: incoming.messageSid,
+        from: incoming.from,
+        to: incoming.to,
+        body: incoming.body,
+        direction: sentByUs ? "outbound" : "inbound",
+        status: "received",
+        numMedia: String(incoming.numMedia),
+        mediaUrls: incoming.mediaUrls,
+        dateCreated: new Date(),
+      })
+    );
   } catch (error) {
     console.error("Failed to save incoming message:", error);
     return new NextResponse("Failed to store message", { status: 500 });

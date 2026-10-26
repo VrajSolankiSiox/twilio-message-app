@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
+import { runWithOrganizationId } from "@/lib/org-context";
 
 export async function GET() {
   const session = await getSession();
@@ -9,7 +10,9 @@ export async function GET() {
 
   try {
     const { getAllCalls } = await import("@/lib/db/calls");
-    const calls = await getAllCalls();
+    const calls = await runWithOrganizationId(session.organizationId, () =>
+      getAllCalls()
+    );
     return NextResponse.json({ calls });
   } catch (err) {
     return NextResponse.json(

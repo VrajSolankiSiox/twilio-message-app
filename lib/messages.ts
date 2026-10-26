@@ -46,6 +46,30 @@ export interface Conversation {
   originatingCampaign?: { id: string; name: string } | null;
 }
 
+/** True when inbox preview is ahead of what the open thread has loaded. */
+export function conversationThreadNeedsReload(conv: Conversation): boolean {
+  if (conv.messages.length === 0) return true;
+  const expected = conv.messageCount ?? conv.messages.length;
+  if (expected > conv.messages.length) return true;
+  const latest = conv.messages[conv.messages.length - 1];
+  if (!latest?.dateCreated || !conv.lastMessageAt) return false;
+  if (
+    new Date(conv.lastMessageAt).getTime() >
+    new Date(latest.dateCreated).getTime() + 500
+  ) {
+    return true;
+  }
+  if (
+    conv.lastMessageDirection === "inbound" &&
+    latest.direction === "outbound" &&
+    conv.lastMessage.trim() &&
+    conv.lastMessage.trim() !== latest.body.trim()
+  ) {
+    return true;
+  }
+  return false;
+}
+
 export function conversationLabel(conversation: Conversation): string {
   const name = conversation.contactName?.trim();
   if (name) return name;

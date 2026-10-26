@@ -1,6 +1,10 @@
 import bcrypt from "bcryptjs";
 import { ObjectId } from "mongodb";
 import { getDb } from "@/lib/mongodb";
+import {
+  ensureOrganizations,
+  ORGANIZATION_GREEN_ID,
+} from "@/lib/db/organizations";
 
 export type UserRole = "admin" | "employee";
 
@@ -10,6 +14,7 @@ export interface User {
   email: string;
   passwordHash: string;
   role: UserRole;
+  organizationId: string;
   createdAt: Date;
 }
 
@@ -17,8 +22,10 @@ let indexesEnsured = false;
 
 async function ensureIndexes() {
   if (indexesEnsured) return;
+  await ensureOrganizations();
   const db = await getDb();
   await db.collection<User>("users").createIndex({ email: 1 }, { unique: true });
+  await db.collection<User>("users").createIndex({ organizationId: 1 });
   indexesEnsured = true;
 }
 
@@ -41,6 +48,7 @@ export async function ensureAdminUser(): Promise<void> {
     email: email.toLowerCase(),
     passwordHash,
     role: "admin",
+    organizationId: ORGANIZATION_GREEN_ID,
     createdAt: new Date(),
   });
 }
@@ -69,11 +77,27 @@ export async function verifyUserPassword(
   return valid ? user : null;
 }
 
+/** Login only — no migrations, indexes, or admin bootstrap (keeps sign-in fast). */
+export async function verifyUserPasswordForLogin(
+  email: string,
+  password: string
+): Promise<User | null> {
+  const db = await getDb();
+  const user = await db.collection<User>("users").findOne({
+    email: email.trim().toLowerCase(),
+  });
+  if (!user?.passwordHash) return null;
+
+  const valid = await bcrypt.compare(password, user.passwordHash);
+  return valid ? user : null;
+}
+
 export async function createUser(
   fullName: string,
   email: string,
   password: string,
-  role: UserRole = "employee"
+  role: UserRole = "employee",
+  organizationId: string = ORGANIZATION_GREEN_ID
 ): Promise<User> {
   await ensureIndexes();
   const db = await getDb();
@@ -90,6 +114,7 @@ export async function createUser(
     email: email.toLowerCase().trim(),
     passwordHash,
     role,
+    organizationId,
     createdAt: new Date(),
   };
 
@@ -97,14 +122,14 @@ export async function createUser(
   return user;
 }
 
-export async function listUsers(): Promise<
+export async function listUsers(organizationId: string): Promise<
   Array<{ id: string; fullName: string; email: string; role: UserRole; createdAt: string }>
 > {
   await ensureIndexes();
   const db = await getDb();
   const users = await db
     .collection<User>("users")
-    .find({}, { projection: { passwordHash: 0 } })
+    .find({ organizationId }, { projection: { passwordHash: 0 } })
     .sort({ createdAt: -1 })
     .toArray();
 

@@ -1,5 +1,6 @@
 import { ObjectId } from "mongodb";
 import { getDb } from "@/lib/mongodb";
+import { organizationQuery, requireOrganizationId } from "@/lib/org-context";
 import type {
   InvoiceData,
   InvoiceLineItem,
@@ -8,6 +9,7 @@ import type {
 
 interface InvoiceDocument {
   _id: ObjectId;
+  organizationId: string;
   name: string;
   data: InvoiceData;
   createdByUserId: string;
@@ -109,10 +111,10 @@ function serializeInvoice(invoice: InvoiceDocument): SavedInvoice {
   };
 }
 
-export async function listInvoices(userId: string): Promise<SavedInvoice[]> {
+export async function listInvoices(): Promise<SavedInvoice[]> {
   const collection = await invoices();
   const rows = await collection
-    .find({ createdByUserId: userId })
+    .find(organizationQuery())
     .sort({ updatedAt: -1 })
     .limit(100)
     .toArray();
@@ -127,6 +129,7 @@ export async function createInvoice(
   const now = new Date();
   const invoice: InvoiceDocument = {
     _id: new ObjectId(),
+    organizationId: requireOrganizationId(),
     name: cleanName(name),
     data: validateInvoiceData(data),
     createdByUserId: userId,
@@ -147,7 +150,7 @@ export async function updateInvoice(
   if (!ObjectId.isValid(id)) return null;
   const collection = await invoices();
   const updated = await collection.findOneAndUpdate(
-    { _id: new ObjectId(id), createdByUserId: userId },
+    { _id: new ObjectId(id), ...organizationQuery() },
     {
       $set: {
         name: cleanName(name),
@@ -166,9 +169,10 @@ export async function deleteInvoice(
 ): Promise<boolean> {
   if (!ObjectId.isValid(id)) return false;
   const collection = await invoices();
+  void userId;
   const result = await collection.deleteOne({
     _id: new ObjectId(id),
-    createdByUserId: userId,
+    ...organizationQuery(),
   });
   return result.deletedCount === 1;
 }

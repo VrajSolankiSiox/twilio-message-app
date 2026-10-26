@@ -3,6 +3,7 @@ import twilio from "twilio";
 import { saveCall } from "@/lib/db/calls";
 import { normalizePhone } from "@/lib/phone";
 import { getStatusCallbackUrl, getVoiceConfig } from "@/lib/twilio-voice";
+import { validateTwilioRequest } from "@/lib/twilio-webhook";
 
 export async function POST(request: NextRequest) {
   const config = getVoiceConfig();
@@ -12,12 +13,20 @@ export async function POST(request: NextRequest) {
 
   try {
     const formData = await request.formData();
-    const rawTo = formData.get("To")?.toString();
-    const callSid = formData.get("CallSid")?.toString();
-    const initiatedByUserId =
-      formData.get("InitiatedByUserId")?.toString() || undefined;
-    const initiatedByName =
-      formData.get("InitiatedByName")?.toString() || undefined;
+    const params: Record<string, string> = {};
+    formData.forEach((value, key) => {
+      params[key] = value.toString();
+    });
+
+    const signature = request.headers.get("x-twilio-signature");
+    if (!validateTwilioRequest(request.url, params, signature)) {
+      return new NextResponse("Forbidden", { status: 403 });
+    }
+
+    const rawTo = params.To;
+    const callSid = params.CallSid;
+    const initiatedByUserId = params.InitiatedByUserId || undefined;
+    const initiatedByName = params.InitiatedByName || undefined;
 
     const response = new twilio.twiml.VoiceResponse();
 

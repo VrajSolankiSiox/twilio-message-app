@@ -1,12 +1,18 @@
 import { getDb } from "@/lib/mongodb";
+import { organizationQuery, requireOrganizationId } from "@/lib/org-context";
 import type {
   ChatMessage,
   ContactConversationStats,
 } from "@/lib/messages";
-import { isValidPhoneNumber, normalizePhone } from "@/lib/phone";
+import {
+  isValidPhoneNumber,
+  normalizePhone,
+  phoneLookupVariants,
+} from "@/lib/phone";
 import { isStopMessage } from "@/lib/stop";
 
 export interface StoredMessage {
+  organizationId?: string;
   sid: string;
   from: string;
   to: string;
@@ -76,6 +82,7 @@ export async function saveMessage(
   message: Omit<StoredMessage, "createdAt">
 ): Promise<void> {
   await ensureIndexes();
+  const organizationId = requireOrganizationId();
   const { ensureConversationExists } = await import("@/lib/db/conversations");
   const contactPhone = normalizePhone(
     message.direction === "inbound" ? message.from : message.to
@@ -111,7 +118,7 @@ export async function saveMessage(
 
   if (Object.keys(convUpdates).length > 0) {
     await db.collection("conversations").updateOne(
-      { phone: contactPhone },
+      { organizationId, phone: contactPhone },
       { $set: { ...convUpdates, updatedAt: new Date() } }
     );
   }
@@ -121,7 +128,7 @@ export async function saveMessage(
   const write = await db.collection<StoredMessage>("messages").updateOne(
     { sid: message.sid },
     {
-      $set: { contactPhone, conversationId },
+      $set: { contactPhone, conversationId, organizationId },
       $setOnInsert: {
         ...messageForInsert,
         createdAt: new Date(),
@@ -138,6 +145,7 @@ export async function saveMessage(
   const { publishRealtime } = await import("@/lib/realtime");
   publishRealtime({
     type: "message",
+    organizationId,
     phone: contactPhone,
     direction: message.direction,
     body: message.body,
@@ -151,7 +159,7 @@ export async function getAllMessages(): Promise<ChatMessage[]> {
 
   const messages = await db
     .collection<StoredMessage>("messages")
-    .find({})
+    .find(organizationQuery())
     .sort({ dateCreated: 1 })
     .toArray();
 
@@ -164,6 +172,7 @@ export async function aggregateContactConversationStats(): Promise<
   await ensureIndexes();
   const db = await getDb();
 
+  const orgId = requireOrganizationId();
   const rows = await db
     .collection<StoredMessage>("messages")
     .aggregate<{
@@ -177,6 +186,7 @@ export async function aggregateContactConversationStats(): Promise<
       messageCount: number;
     }>(
       [
+      { $match: { organizationId: orgId } },
       {
         $addFields: {
           contactPhone: {
@@ -269,8 +279,16 @@ export async function getMessagesForContact(
   const db = await getDb();
   const contactPhone = normalizePhone(phone);
   const limit = Math.max(1, options.limit);
+  const phoneVariants = phoneLookupVariants(contactPhone);
 
-  const filter: Record<string, unknown> = { contactPhone };
+  const filter: Record<string, unknown> = {
+    ...organizationQuery(),
+    $or: [
+      { contactPhone: contactPhone },
+      { direction: "inbound", from: { $in: phoneVariants } },
+      { direction: "outbound", to: { $in: phoneVariants } },
+    ],
+  };
   if (options.before) {
     filter.dateCreated = { $lt: options.before };
   }
@@ -290,7 +308,10 @@ export async function getMessagesForContact(
   if (hasMore || options.before) {
     const summary = await db
       .collection<{ messageCount?: number }>("conversations")
-      .findOne({ phone: contactPhone }, { projection: { messageCount: 1 } });
+      .findOne(
+        { ...organizationQuery(), phone: contactPhone },
+        { projection: { messageCount: 1 } }
+      );
     totalCount = summary?.messageCount ?? messages.length;
   }
 

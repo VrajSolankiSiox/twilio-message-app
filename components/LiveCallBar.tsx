@@ -1,20 +1,26 @@
 "use client";
 
 import { formatPhoneDisplay } from "@/lib/phone";
-import type { CallState } from "@/hooks/useTwilioVoice";
+import type { CallDirection, CallState } from "@/hooks/useTwilioVoice";
 
 interface LiveCallBarProps {
   callState: CallState;
+  callDirection?: CallDirection;
   activeNumber: string | null;
   isMuted: boolean;
   error: string | null;
   fromNumber: string | null;
   onHangUp: () => void;
   onToggleMute: () => void;
+  onAcceptIncoming?: () => void;
+  onRejectIncoming?: () => void;
+  className?: string;
 }
 
-function statusLabel(state: CallState): string {
+function statusLabel(state: CallState, direction: CallDirection): string {
   switch (state) {
+    case "incoming":
+      return direction === "inbound" ? "Incoming call" : "Incoming call";
     case "initializing":
       return "Initializing microphone...";
     case "ready":
@@ -36,14 +42,19 @@ function statusLabel(state: CallState): string {
 
 export default function LiveCallBar({
   callState,
+  callDirection = null,
   activeNumber,
   isMuted,
   error,
   fromNumber,
   onHangUp,
   onToggleMute,
+  onAcceptIncoming,
+  onRejectIncoming,
+  className = "",
 }: LiveCallBarProps) {
   const inCall =
+    callState === "incoming" ||
     callState === "connecting" ||
     callState === "ringing" ||
     callState === "connected" ||
@@ -51,8 +62,12 @@ export default function LiveCallBar({
 
   if (!inCall) return null;
 
+  const isIncoming = callState === "incoming";
+
   return (
-    <div className="shrink-0 border-t border-brand/20 bg-brand-muted/40 px-4 py-3 sm:px-6 sm:py-4">
+    <div
+      className={`shrink-0 border-t border-brand/20 bg-brand-muted/40 px-4 py-3 sm:px-6 sm:py-4 ${className}`}
+    >
       <div className="mx-auto flex max-w-2xl flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
         <div className="min-w-0">
           {activeNumber && (
@@ -61,8 +76,8 @@ export default function LiveCallBar({
             </p>
           )}
           <p className="text-xs text-zinc-500">
-            {error || statusLabel(callState)}
-            {fromNumber && !error && (
+            {error || statusLabel(callState, callDirection)}
+            {fromNumber && !error && callDirection === "outbound" && (
               <span className="ml-2 text-zinc-400">
                 via {formatPhoneDisplay(fromNumber)}
               </span>
@@ -72,6 +87,24 @@ export default function LiveCallBar({
 
         {inCall && (
           <div className="flex shrink-0 items-center justify-end gap-2">
+            {isIncoming && onAcceptIncoming && onRejectIncoming && (
+              <>
+                <button
+                  type="button"
+                  onClick={onRejectIncoming}
+                  className="rounded-xl bg-white px-4 py-2 text-xs font-semibold text-zinc-700 transition-colors hover:bg-zinc-50"
+                >
+                  Decline
+                </button>
+                <button
+                  type="button"
+                  onClick={onAcceptIncoming}
+                  className="rounded-xl bg-emerald-600 px-4 py-2 text-xs font-semibold text-white transition-colors hover:bg-emerald-700"
+                >
+                  Accept
+                </button>
+              </>
+            )}
             {callState === "connected" && (
               <button
                 type="button"
@@ -85,6 +118,7 @@ export default function LiveCallBar({
                 {isMuted ? "Unmute" : "Mute"}
               </button>
             )}
+            {!isIncoming && (
             <button
               type="button"
               onClick={onHangUp}
@@ -100,6 +134,7 @@ export default function LiveCallBar({
               </svg>
               Hang up
             </button>
+            )}
           </div>
         )}
       </div>

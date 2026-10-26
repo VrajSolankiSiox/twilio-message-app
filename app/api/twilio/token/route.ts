@@ -1,8 +1,10 @@
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
-import { TWILIO_VOICE_NOT_CONFIGURED_MESSAGE } from "@/lib/voice-client";
+import { twilioFromNumberForOrganization } from "@/lib/db/organizations";
+import { formatVoiceNotConfiguredMessage } from "@/lib/voice-client";
 import {
   createVoiceAccessToken,
+  getMissingVoiceEnvKeys,
   getVoiceConfig,
 } from "@/lib/twilio-voice";
 
@@ -14,8 +16,12 @@ export async function GET() {
 
   const config = getVoiceConfig();
   if (!config) {
+    const missingKeys = getMissingVoiceEnvKeys();
     return NextResponse.json(
-      { error: TWILIO_VOICE_NOT_CONFIGURED_MESSAGE },
+      {
+        error: formatVoiceNotConfiguredMessage(missingKeys),
+        missingEnvKeys: missingKeys,
+      },
       { status: 500 }
     );
   }
@@ -24,10 +30,14 @@ export async function GET() {
     const identity = `user_${session.userId}`;
     const token = createVoiceAccessToken(identity);
 
+    const fromNumber =
+      (await twilioFromNumberForOrganization(session.organizationId)) ??
+      config.fromNumber;
+
     return NextResponse.json({
       token,
       identity,
-      fromNumber: config.fromNumber,
+      fromNumber,
     });
   } catch (err) {
     return NextResponse.json(

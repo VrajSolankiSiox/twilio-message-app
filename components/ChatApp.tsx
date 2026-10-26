@@ -7,7 +7,6 @@ import ConversationList from "@/components/ConversationList";
 import InboxFilters from "@/components/messages/InboxFilters";
 import NewContactComposer from "@/components/messages/NewContactComposer";
 import MessageNotificationControls from "@/components/messages/MessageNotificationControls";
-import LiveCallBar from "@/components/LiveCallBar";
 import { useVoiceCall } from "@/components/VoiceCallProvider";
 import Link from "next/link";
 import { useIsMobile } from "@/hooks/useIsMobile";
@@ -16,7 +15,11 @@ import { highlightStopWithOtherReply } from "@/lib/filters";
 import { formatOutboundMessageStatus } from "@/lib/message-status";
 import { isStopMessage } from "@/lib/stop";
 import type { ChatMessage, Conversation } from "@/lib/messages";
-import { conversationLabel, sortConversations } from "@/lib/messages";
+import {
+  conversationLabel,
+  conversationThreadNeedsReload,
+  sortConversations,
+} from "@/lib/messages";
 import {
   CONVERSATION_LIST_PAGE_SIZE,
   MESSAGE_THREAD_PAGE_SIZE,
@@ -62,7 +65,10 @@ function useRelativeTimeClock(intervalMs = 60_000): Date {
   return now;
 }
 
-const INBOX_CACHE_KEY = "revenelx-inbox-cache-v2";
+function inboxCacheKey(organizationId: string): string {
+  const org = organizationId.trim() || "unknown";
+  return `revenelx-inbox-cache-v3-${org}`;
+}
 
 type ListSnapshot = {
   conversations: Conversation[];
@@ -70,10 +76,10 @@ type ListSnapshot = {
   hasMore: boolean;
 };
 
-function readInboxStore(): Map<string, ListSnapshot> {
+function readInboxStore(organizationId: string): Map<string, ListSnapshot> {
   if (typeof window === "undefined") return new Map();
   try {
-    const raw = localStorage.getItem(INBOX_CACHE_KEY);
+    const raw = localStorage.getItem(inboxCacheKey(organizationId));
     if (!raw) return new Map();
     const parsed = JSON.parse(raw) as Record<string, ListSnapshot>;
     return new Map(
@@ -94,7 +100,10 @@ function readInboxStore(): Map<string, ListSnapshot> {
   }
 }
 
-function writeInboxStore(lists: Map<string, ListSnapshot>): void {
+function writeInboxStore(
+  organizationId: string,
+  lists: Map<string, ListSnapshot>
+): void {
   try {
     const slim: Record<string, ListSnapshot> = {};
     for (const [key, value] of lists) {
@@ -107,7 +116,7 @@ function writeInboxStore(lists: Map<string, ListSnapshot>): void {
         })),
       };
     }
-    localStorage.setItem(INBOX_CACHE_KEY, JSON.stringify(slim));
+    localStorage.setItem(inboxCacheKey(organizationId), JSON.stringify(slim));
   } catch {
     // Ignore quota errors. The server response is still shown.
   }
@@ -240,8 +249,10 @@ function addMessageToConversations(
   ]);
 }
 
-export default function ChatApp() {
+export default function ChatApp({ organizationId }: { organizationId: string }) {
   const router = useRouter();
+  const organizationIdRef = useRef(organizationId);
+  organizationIdRef.current = organizationId;
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const relativeNow = useRelativeTimeClock();
@@ -293,8 +304,16 @@ export default function ChatApp() {
   );
   const pendingClosedRef = useRef(new Map<string, Conversation>());
   const pendingStartedRef = useRef(new Map<string, Conversation>());
+  /** Avoid hammering thread API when inbox preview is ahead of loaded bubbles. */
+  const threadReloadKeyRef = useRef("");
   const filterKeyRef = useRef("0:0:0");
   filterKeyRef.current = `${showClosed}:${showStop}:${showBlank}`;
+
+  const persistListCache = useCallback(() => {
+    const org = organizationIdRef.current.trim();
+    if (!org) return;
+    writeInboxStore(org, listCacheRef.current);
+  }, []);
 
   const getNotificationContext = useCallback(
     () => ({
@@ -319,10 +338,6 @@ export default function ChatApp() {
     setSelectedPhone(normalizePhone(phone));
     setMobilePane("chat");
   }, [searchParams]);
-
-  useEffect(() => {
-    voice.initialize();
-  }, [voice.initialize]);
 
   useEffect(() => {
     if (currentUser?.role !== "admin") {
@@ -747,7 +762,7 @@ export default function ChatApp() {
             total: visibleList.length,
             hasMore: Boolean(data.hasMore),
           });
-          writeInboxStore(listCacheRef.current);
+          persistListCache();
         }
 
         if (!append) {
@@ -780,11 +795,21 @@ export default function ChatApp() {
         setLoadingMoreList(false);
       }
     },
-    [applyPendingClosed, applyPendingStarted, getNotificationContext, showClosed, showStop, showBlank]
+    [
+      applyPendingClosed,
+      applyPendingStarted,
+      getNotificationContext,
+      persistListCache,
+      showClosed,
+      showStop,
+      showBlank,
+    ]
   );
 
   useLayoutEffect(() => {
-    const stored = readInboxStore();
+    const org = organizationId.trim();
+    if (!org) return;
+    const stored = readInboxStore(org);
     if (stored.size === 0) return;
     listCacheRef.current = stored;
     const cached = stored.get(filterKeyRef.current);
@@ -793,7 +818,7 @@ export default function ChatApp() {
     setConversationTotal(cached.total);
     setHasMoreConversations(cached.hasMore);
     setLoading(false);
-  }, []);
+  }, [organizationId]);
 
   useEffect(() => {
     setListPage(1);
@@ -957,7 +982,7 @@ export default function ChatApp() {
                 total: openRest.length + 1,
                 hasMore: open?.hasMore ?? false,
               });
-              writeInboxStore(listCacheRef.current);
+              persistListCache();
               if (filterKeyRef.current.startsWith("true:") && !nextConv.isClosed) {
                 return rest;
               }
@@ -971,7 +996,8 @@ export default function ChatApp() {
             (!data.phone ||
               normalizePhone(data.phone) === normalizePhone(openPhone))
           ) {
-            void loadThread(openPhone, { appendNew: true, silent: true });
+            threadReloadKeyRef.current = "";
+            void loadThread(openPhone, { silent: true });
           }
         } catch {
           // Ignore malformed frames.
@@ -1013,9 +1039,11 @@ export default function ChatApp() {
     const conv = conversations.find(
       (c) => normalizePhone(c.phone) === normalizePhone(selectedPhone)
     );
-    if (conv && conv.messages.length === 0) {
-      void loadThread(selectedPhone);
-    }
+    if (!conv || !conversationThreadNeedsReload(conv)) return;
+    const reloadKey = `${normalizePhone(selectedPhone)}:${conv.lastMessageAt}:${conv.messageCount ?? 0}`;
+    if (threadReloadKeyRef.current === reloadKey) return;
+    threadReloadKeyRef.current = reloadKey;
+    void loadThread(selectedPhone, { silent: conv.messages.length > 0 });
   }, [selectedPhone, conversations, loadThread]);
 
   useEffect(() => {
@@ -1109,7 +1137,7 @@ export default function ChatApp() {
           hasMore: false,
         });
       }
-      writeInboxStore(listCacheRef.current);
+      persistListCache();
     } else {
       pendingClosedRef.current.delete(normalized);
       const openConv: Conversation = {
@@ -1136,7 +1164,7 @@ export default function ChatApp() {
               }
         );
       }
-      writeInboxStore(listCacheRef.current);
+      persistListCache();
     }
 
     if ((closed && !showClosed) || (!closed && showClosed)) {
@@ -1327,7 +1355,7 @@ export default function ChatApp() {
             total: rest.length + 1,
             hasMore: cached?.hasMore ?? false,
           });
-          writeInboxStore(listCacheRef.current);
+          persistListCache();
         }
         return next;
       });
@@ -1870,15 +1898,6 @@ export default function ChatApp() {
                 </div>
               )}
 
-              <LiveCallBar
-                callState={voice.callState}
-                activeNumber={voice.activeNumber}
-                isMuted={voice.isMuted}
-                error={voice.error}
-                fromNumber={voice.fromNumber}
-                onHangUp={voice.hangUp}
-                onToggleMute={voice.toggleMute}
-              />
             </>
           ) : (
             <div className="flex flex-1 flex-col items-center justify-center gap-3 bg-[#f9f8fd] text-zinc-400">

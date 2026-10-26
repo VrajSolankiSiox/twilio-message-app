@@ -9,11 +9,14 @@ export type CallState =
   | "idle"
   | "initializing"
   | "ready"
+  | "incoming"
   | "connecting"
   | "ringing"
   | "connected"
   | "disconnecting"
   | "error";
+
+export type CallDirection = "inbound" | "outbound" | null;
 
 interface VoiceUser {
   userId: string;
@@ -36,11 +39,13 @@ export function useTwilioVoice() {
     string | null
   >(null);
   const [fromNumber, setFromNumber] = useState<string | null>(null);
+  const [callDirection, setCallDirection] = useState<CallDirection>(null);
 
   const cleanupCall = useCallback(() => {
     activeCallRef.current = null;
     setActiveNumber(null);
     setIsMuted(false);
+    setCallDirection(null);
     setCallState(deviceRef.current ? "ready" : "idle");
   }, []);
 
@@ -68,7 +73,11 @@ export function useTwilioVoice() {
     const res = await apiFetch("/api/twilio/token", { cache: "no-store" });
     const data = await res.json();
     if (!res.ok) {
-      throw new Error(data.error || "Failed to get voice token");
+      const detail =
+        typeof data.error === "string"
+          ? data.error
+          : "Failed to get voice token";
+      throw new Error(detail);
     }
     return data as { token: string; fromNumber: string };
   }, []);
@@ -103,6 +112,28 @@ export function useTwilioVoice() {
         }
       });
 
+      device.on("incoming", (call) => {
+        if (activeCallRef.current) {
+          call.reject();
+          return;
+        }
+
+        const from =
+          call.parameters.From ||
+          call.customParameters?.get?.("From") ||
+          "Unknown";
+
+        activeCallRef.current = call;
+        setCallDirection("inbound");
+        setActiveNumber(from);
+        setCallState("incoming");
+        setError(null);
+
+        call.on("cancel", cleanupCall);
+        call.on("disconnect", cleanupCall);
+        call.on("reject", cleanupCall);
+      });
+
       await device.register();
       deviceRef.current = device;
     } catch (err) {
@@ -116,7 +147,7 @@ export function useTwilioVoice() {
       setError(message);
       setCallState("error");
     }
-  }, [refreshToken, voiceUnavailableHint]);
+  }, [cleanupCall, refreshToken, voiceUnavailableHint]);
 
   const startCall = useCallback(
     async ({ to, user }: StartCallOptions) => {
@@ -140,6 +171,7 @@ export function useTwilioVoice() {
       }
 
       setCallState("connecting");
+      setCallDirection("outbound");
       setActiveNumber(to);
 
       try {
@@ -160,12 +192,33 @@ export function useTwilioVoice() {
     [attachCallListeners, cleanupCall, initialize, voiceUnavailableHint]
   );
 
-  const hangUp = useCallback(() => {
-    setCallState("disconnecting");
-    activeCallRef.current?.disconnect();
-    deviceRef.current?.disconnectAll();
+  const acceptIncoming = useCallback(() => {
+    const call = activeCallRef.current;
+    if (!call) return;
+
+    setCallState("connecting");
+    call.accept();
+    attachCallListeners(call);
+  }, [attachCallListeners]);
+
+  const rejectIncoming = useCallback(() => {
+    const call = activeCallRef.current;
+    if (!call) return;
+    call.reject();
     cleanupCall();
   }, [cleanupCall]);
+
+  const hangUp = useCallback(() => {
+    setCallState("disconnecting");
+    const call = activeCallRef.current;
+    if (call && callDirection === "inbound" && callState === "incoming") {
+      call.reject();
+    } else {
+      call?.disconnect();
+      deviceRef.current?.disconnectAll();
+    }
+    cleanupCall();
+  }, [callDirection, callState, cleanupCall]);
 
   const toggleMute = useCallback(() => {
     const call = activeCallRef.current;
@@ -185,6 +238,7 @@ export function useTwilioVoice() {
   }, []);
 
   const isInCall =
+    callState === "incoming" ||
     callState === "connecting" ||
     callState === "ringing" ||
     callState === "connected" ||
@@ -192,6 +246,7 @@ export function useTwilioVoice() {
 
   return {
     callState,
+    callDirection,
     activeNumber,
     isMuted,
     error,
@@ -201,6 +256,8 @@ export function useTwilioVoice() {
     isReady: callState === "ready",
     initialize,
     startCall,
+    acceptIncoming,
+    rejectIncoming,
     hangUp,
     toggleMute,
     setError,

@@ -1,5 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { authenticateUser, createSessionToken } from "@/lib/auth";
+import {
+  authenticateUser,
+  createSessionToken,
+  SESSION_COOKIE,
+  SESSION_MAX_AGE_SECONDS,
+} from "@/lib/auth";
+import { ensureOrganizations } from "@/lib/db/organizations";
 
 export async function POST(request: NextRequest) {
   try {
@@ -21,10 +27,14 @@ export async function POST(request: NextRequest) {
     }
 
     const token = await createSessionToken(user);
+    void ensureOrganizations().catch((err) => {
+      console.error("Post-login org sync failed:", err);
+    });
 
-    return NextResponse.json({
+    const response = NextResponse.json({
       success: true,
       token,
+      expiresIn: SESSION_MAX_AGE_SECONDS,
       user: {
         id: user._id.toString(),
         fullName: user.fullName,
@@ -32,6 +42,16 @@ export async function POST(request: NextRequest) {
         role: user.role,
       },
     });
+
+    response.cookies.set(SESSION_COOKIE, token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      maxAge: SESSION_MAX_AGE_SECONDS,
+      path: "/",
+    });
+
+    return response;
   } catch (error) {
     console.error("Login error:", error);
 

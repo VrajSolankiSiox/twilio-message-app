@@ -1,5 +1,6 @@
 export interface RealtimeEvent {
   type: "message";
+  organizationId?: string;
   phone: string;
   direction: "inbound" | "outbound";
   body?: string;
