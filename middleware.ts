@@ -5,6 +5,7 @@ const PUBLIC_PATHS = [
   "/login",
   "/api/auth/login",
   "/api/twilio/incoming",
+  "/api/twilio/incomingcall",
   "/api/twilio/call-status",
   "/api/twilio/message-status",
   "/api/twilio/voice",

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
+import { runWithOrganizationId } from "@/lib/org-context";
 import { getOriginatingCampaignMap } from "@/lib/db/campaigns";
 import { getAssignment } from "@/lib/db/conversations";
 import { getMessagesForContact } from "@/lib/db/messages";
@@ -42,6 +43,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  return runWithOrganizationId(session.organizationId, async () => {
   const phone = request.nextUrl.searchParams.get("phone");
   if (!phone) {
     return NextResponse.json({ error: "phone is required" }, { status: 400 });
@@ -107,4 +109,5 @@ export async function GET(request: NextRequest) {
       { status: 500 }
     );
   }
+  });
 }

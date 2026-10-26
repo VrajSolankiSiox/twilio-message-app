@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
+import { runWithOrganizationId } from "@/lib/org-context";
 import { getConversationReadsForUser } from "@/lib/db/conversation-reads";
 import { getOriginatingCampaignMap } from "@/lib/db/campaigns";
 import { listStoredConversations } from "@/lib/db/inbox";
@@ -18,6 +19,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  return runWithOrganizationId(session.organizationId, async () => {
   try {
     const showStop = request.nextUrl.searchParams.get("showStop") === "true";
     const showBlank = request.nextUrl.searchParams.get("showBlank") === "true";
@@ -94,4 +96,5 @@ export async function GET(request: NextRequest) {
       { status: 500 }
     );
   }
+  });
 }

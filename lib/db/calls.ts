@@ -1,6 +1,8 @@
 import { getDb } from "@/lib/mongodb";
+import { organizationQuery, requireOrganizationId } from "@/lib/org-context";
 
 export interface StoredCall {
+  organizationId?: string;
   sid: string;
   from: string;
   to: string;
@@ -33,6 +35,7 @@ export async function saveCall(
   }
 ): Promise<void> {
   await ensureIndexes();
+  const organizationId = requireOrganizationId();
   const db = await getDb();
   const now = new Date();
 
@@ -41,6 +44,7 @@ export async function saveCall(
     {
       $set: {
         ...call,
+        organizationId,
         dateUpdated: call.dateUpdated ?? now,
       },
       $setOnInsert: {
@@ -89,7 +93,7 @@ export async function getAllCalls(): Promise<
 
   const calls = await db
     .collection<StoredCall>("calls")
-    .find({})
+    .find(organizationQuery())
     .sort({ dateCreated: -1 })
     .limit(100)
     .toArray();

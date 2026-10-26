@@ -19,7 +19,7 @@ export async function GET() {
   }
 
   try {
-    return NextResponse.json({ invoices: await listInvoices(session.userId) });
+    return NextResponse.json({ invoices: await listInvoices() });
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "Failed to load invoices";

@@ -19,7 +19,13 @@ import {
   requeueSentRecipientsForFollowUp,
   serializeCampaign,
 } from "@/lib/db/campaigns";
+import {
+  CROSS_ORG_CUSTOMER_MESSAGE,
+  isCustomerBlockedForOrganization,
+} from "@/lib/db/customer-org-lock";
+import { twilioFromNumberForOrganization } from "@/lib/db/organizations";
 import { saveMessage } from "@/lib/db/messages";
+import { requireOrganizationId } from "@/lib/org-context";
 import { getMessageStatusCallbackUrl } from "@/lib/message-status";
 
 export const maxDuration = 60;
@@ -71,7 +77,8 @@ export async function POST(
     });
   }
 
-  const fromNumber = process.env.TWILIO_FROM_NUMBER;
+  const organizationId = requireOrganizationId();
+  const fromNumber = await twilioFromNumberForOrganization(organizationId);
 
   if (!twilioConfigured() || !fromNumber) {
     const campaign = await finishSendTick(
@@ -100,6 +107,18 @@ export async function POST(
     for (const recipient of batch) {
       const stillSending = await heartbeatSendLock(id, claim.lockToken);
       if (!stillSending) break;
+
+      if (await isCustomerBlockedForOrganization(recipient.phone, organizationId)) {
+        await markRecipientSkipped(recipient._id, CROSS_ORG_CUSTOMER_MESSAGE);
+        processed.push({
+          phone: recipient.phone,
+          name: recipient.name,
+          status: "skipped",
+          error: CROSS_ORG_CUSTOMER_MESSAGE,
+          updatedAt: new Date().toISOString(),
+        });
+        continue;
+      }
 
       if (alreadyMessaged.has(recipient.phone)) {
         await markRecipientSkipped(

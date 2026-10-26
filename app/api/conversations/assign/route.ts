@@ -5,8 +5,9 @@ import { invalidateInboxCache } from "@/lib/db/inbox";
 import { findUserById } from "@/lib/db/users";
 
 export async function POST(request: NextRequest) {
+  let session;
   try {
-    await requireAdmin();
+    session = await requireAdmin();
   } catch (err) {
     const message = err instanceof Error ? err.message : "Forbidden";
     const status = message === "Unauthorized" ? 401 : 403;
@@ -41,6 +42,12 @@ export async function POST(request: NextRequest) {
       const user = await findUserById(userId);
       if (!user) {
         return NextResponse.json({ error: "Team member not found" }, { status: 404 });
+      }
+      if (user.organizationId !== session.organizationId) {
+        return NextResponse.json(
+          { error: "Team member is not in your organization" },
+          { status: 403 }
+        );
       }
       assignee = {
         userId: user._id.toString(),

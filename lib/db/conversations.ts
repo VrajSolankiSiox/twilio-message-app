@@ -1,8 +1,10 @@
 import { randomUUID } from "crypto";
 import { getDb } from "@/lib/mongodb";
+import { organizationQuery, requireOrganizationId } from "@/lib/org-context";
 import { isValidPhoneNumber, normalizePhone } from "@/lib/phone";
 
 export interface ConversationAssignment {
+  organizationId?: string;
   /** Stable chat id (not the phone number). */
   id?: string;
   phone: string;
@@ -33,10 +35,15 @@ async function ensureIndexes() {
   if (indexesEnsured) return;
   const db = await getDb();
   const col = db.collection<ConversationAssignment>("conversations");
-  await col.createIndex({ phone: 1 }, { unique: true });
+  await col.createIndex({ organizationId: 1, phone: 1 });
+  await col.createIndex({ phone: 1 });
   await col.createIndex({ id: 1 }, { unique: true, sparse: true });
-  await col.createIndex({ lastMessageAt: -1 });
+  await col.createIndex({ organizationId: 1, lastMessageAt: -1 });
   indexesEnsured = true;
+}
+
+function conversationFilter(phone: string) {
+  return { ...organizationQuery(), phone: normalizePhone(phone) };
 }
 
 export async function ensureConversationIndexes(): Promise<void> {
@@ -53,13 +60,16 @@ export async function getAssignment(
   const db = await getDb();
   return db
     .collection<ConversationAssignment>("conversations")
-    .findOne({ phone: normalizePhone(phone) });
+    .findOne(conversationFilter(phone));
 }
 
 export async function getAllAssignments(): Promise<ConversationAssignment[]> {
   await ensureIndexes();
   const db = await getDb();
-  return db.collection<ConversationAssignment>("conversations").find({}).toArray();
+  return db
+    .collection<ConversationAssignment>("conversations")
+    .find(organizationQuery())
+    .toArray();
 }
 
 export async function ensureConversationExists(phone: string): Promise<void> {
@@ -69,10 +79,12 @@ export async function ensureConversationExists(phone: string): Promise<void> {
 
   const db = await getDb();
 
+  const organizationId = requireOrganizationId();
   await db.collection<ConversationAssignment>("conversations").updateOne(
-    { phone: normalized },
+    { organizationId, phone: normalized },
     {
       $setOnInsert: {
+        organizationId,
         id: newConversationId(),
         phone: normalized,
         contactName: null,
@@ -109,7 +121,7 @@ export async function assignConversation(
   }
 
   await db.collection<ConversationAssignment>("conversations").updateOne(
-    { phone: normalized, assignedToUserId: null },
+    { ...conversationFilter(normalized), assignedToUserId: null },
     {
       $set: {
         assignedToUserId: userId,
@@ -157,7 +169,7 @@ export async function setConversationAssignee(
 
   await db
     .collection<ConversationAssignment>("conversations")
-    .updateOne({ phone: normalized }, { $set: assignmentFields });
+    .updateOne(conversationFilter(normalized), { $set: assignmentFields });
 
   const updated = await getAssignment(normalized);
   if (!updated) {
@@ -191,7 +203,7 @@ export async function setConversationClosed(
       };
 
   const col = db.collection<ConversationAssignment>("conversations");
-  const existing = await col.findOne({ phone: normalized });
+  const existing = await col.findOne(conversationFilter(normalized));
   if (!existing) return null;
 
   if (viewer && viewer.role !== "admin") {
@@ -220,7 +232,7 @@ export async function stampOriginatingCampaign(
   const db = await getDb();
   await db.collection<ConversationAssignment>("conversations").updateOne(
     {
-      phone: normalized,
+      ...conversationFilter(normalized),
       $or: [
         { originatingCampaignId: { $exists: false } },
         { originatingCampaignId: null },
@@ -244,7 +256,7 @@ export async function reopenConversationIfClosed(phone: string): Promise<void> {
   const now = new Date();
 
   await db.collection<ConversationAssignment>("conversations").updateOne(
-    { phone: normalized, closedAt: { $ne: null } },
+    { ...conversationFilter(normalized), closedAt: { $ne: null } },
     {
       $set: {
         closedAt: null,
@@ -271,12 +283,14 @@ export async function upsertContactNames(
 
       const now = new Date();
 
+      const organizationId = requireOrganizationId();
       return {
         updateOne: {
-          filter: { phone },
+          filter: { organizationId, phone },
           update: {
             $set: { contactName: name, updatedAt: now },
             $setOnInsert: {
+              organizationId,
               id: newConversationId(),
               phone,
               assignedToUserId: null,

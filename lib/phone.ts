@@ -8,6 +8,23 @@ export function isValidPhoneNumber(phone: string): boolean {
   return digits.length >= 10 && digits.length <= 15;
 }
 
+/** Values that may appear in Twilio `From` / `To` or legacy `contactPhone` fields. */
+export function phoneLookupVariants(phone: string): string[] {
+  const normalized = normalizePhone(phone);
+  if (!normalized) return [];
+  const digits = phoneDigits(normalized);
+  const variants = new Set<string>([normalized, digits, `+${digits}`]);
+  if (digits.length === 11 && digits.startsWith("1")) {
+    variants.add(`+1${digits.slice(1)}`);
+    variants.add(digits.slice(1));
+  }
+  if (digits.length === 10) {
+    variants.add(`+1${digits}`);
+    variants.add(`1${digits}`);
+  }
+  return [...variants];
+}
+
 export function normalizePhone(phone: string): string {
   const trimmed = phone.trim();
   const digits = phoneDigits(trimmed);

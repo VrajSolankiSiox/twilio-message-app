@@ -4,8 +4,8 @@ import { createUser, listUsers } from "@/lib/db/users";
 
 export async function GET() {
   try {
-    await requireSession();
-    const users = await listUsers();
+    const session = await requireSession();
+    const users = await listUsers(session.organizationId);
     return NextResponse.json({ users });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Forbidden";
@@ -16,7 +16,7 @@ export async function GET() {
 
 export async function POST(request: NextRequest) {
   try {
-    await requireAdmin();
+    const session = await requireAdmin();
     const { fullName, email, password } = await request.json();
 
     if (!fullName?.trim() || !email?.trim() || !password) {
@@ -33,7 +33,13 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const user = await createUser(fullName.trim(), email.trim(), password);
+    const user = await createUser(
+      fullName.trim(),
+      email.trim(),
+      password,
+      "employee",
+      session.organizationId
+    );
 
     return NextResponse.json({
       user: {

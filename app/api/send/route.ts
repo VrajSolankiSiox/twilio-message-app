@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import twilio from "twilio";
 import { getSession } from "@/lib/auth";
+import { twilioFromNumberForOrganization } from "@/lib/db/organizations";
+import { runWithOrganizationId } from "@/lib/org-context";
 import {
   assignConversation,
   ensureConversationExists,
@@ -10,6 +12,10 @@ import {
 import { saveMessage } from "@/lib/db/messages";
 import { canUserReplyToConversation, type Conversation } from "@/lib/messages";
 import { getMessageStatusCallbackUrl } from "@/lib/message-status";
+import {
+  CROSS_ORG_CUSTOMER_MESSAGE,
+  isCustomerBlockedForOrganization,
+} from "@/lib/db/customer-org-lock";
 import { normalizePhone } from "@/lib/phone";
 
 interface SendResult {
@@ -29,6 +35,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  return runWithOrganizationId(session.organizationId, async () => {
   try {
     const { message, phoneNumbers, contactNames } = await request.json();
 
@@ -57,11 +64,22 @@ export async function POST(request: NextRequest) {
 
     const accountSid = process.env.TWILIO_ACCOUNT_SID;
     const authToken = process.env.TWILIO_AUTH_TOKEN;
-    const fromNumber = process.env.TWILIO_FROM_NUMBER;
+    const fromNumber = await twilioFromNumberForOrganization(
+      session.organizationId
+    );
 
-    if (!accountSid || !authToken || !fromNumber) {
+    if (!accountSid || !authToken) {
       return NextResponse.json(
-        { error: "Twilio credentials are not configured" },
+        { error: "Twilio account credentials are not configured (TWILIO_ACCOUNT_SID / TWILIO_AUTH_TOKEN)" },
+        { status: 500 }
+      );
+    }
+    if (!fromNumber) {
+      return NextResponse.json(
+        {
+          error:
+            "No sending phone number is configured. Set TWILIO_FROM_NUMBER (and optionally TWILIO_BLUE_FROM_NUMBER for a dedicated Blue line).",
+        },
         { status: 500 }
       );
     }
@@ -110,6 +128,15 @@ export async function POST(request: NextRequest) {
       const to = normalizePhone(rawNumber);
 
       try {
+        if (await isCustomerBlockedForOrganization(to, session.organizationId)) {
+          results.push({
+            to,
+            success: false,
+            error: CROSS_ORG_CUSTOMER_MESSAGE,
+          });
+          continue;
+        }
+
         const statusCallback = getMessageStatusCallbackUrl();
         const msg = await client.messages.create({
           from: fromNumber,
@@ -172,4 +199,5 @@ export async function POST(request: NextRequest) {
       { status: 400 }
     );
   }
+  });
 }

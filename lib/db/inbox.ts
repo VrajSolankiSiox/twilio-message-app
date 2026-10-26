@@ -2,6 +2,7 @@ import type { ConversationAssignment } from "@/lib/db/conversations";
 import { newConversationId } from "@/lib/db/conversations";
 import type { StoredMessage } from "@/lib/db/messages";
 import { getDb } from "@/lib/mongodb";
+import { organizationQuery, requireOrganizationId } from "@/lib/org-context";
 import { isValidPhoneNumber, normalizePhone } from "@/lib/phone";
 import { isStopMessage } from "@/lib/stop";
 
@@ -39,7 +40,7 @@ async function readStoredInbox(): Promise<ConversationAssignment[]> {
   const db = await getDb();
   return db
     .collection<ConversationAssignment>("conversations")
-    .find({ lastMessageAt: { $type: "date" } })
+    .find({ ...organizationQuery(), lastMessageAt: { $type: "date" } })
     .sort({ lastMessageAt: -1 })
     .toArray();
 }
@@ -56,10 +57,12 @@ interface FastInboxRow {
 /** One collection pass. No global sort and no per-message regex. */
 async function aggregateInboxFast(): Promise<FastInboxRow[]> {
   const db = await getDb();
+  const organizationId = requireOrganizationId();
   return db
     .collection("messages")
     .aggregate<FastInboxRow>(
       [
+        { $match: { organizationId } },
         {
           $group: {
             _id: {
@@ -146,9 +149,10 @@ async function persistInboxSummaries(
   const db = await getDb();
   const col = db.collection<ConversationAssignment>("conversations");
   const now = new Date();
+  const organizationId = requireOrganizationId();
   const ops = rows.map((row) => ({
     updateOne: {
-      filter: { phone: row.phone },
+      filter: { organizationId, phone: row.phone },
       update: {
         $set: {
           lastMessageAt: row.lastMessageAt,
@@ -160,6 +164,7 @@ async function persistInboxSummaries(
           updatedAt: now,
         },
         $setOnInsert: {
+          organizationId,
           id: row.id || newConversationId(),
           phone: row.phone,
           contactName: null,
@@ -190,6 +195,7 @@ async function persistInboxSummaries(
 }
 
 let cachedRows: ConversationAssignment[] | null = null;
+let cachedOrganizationId: string | null = null;
 let cachedLatestMessageAt = 0;
 const cachedMessageSids = new Set<string>();
 
@@ -212,7 +218,10 @@ async function mongoHasUnlistedMessages(): Promise<boolean> {
   const since = new Date(Math.max(0, cachedLatestMessageAt - 10 * 60 * 1000));
   const recent = await db
     .collection<StoredMessage>("messages")
-    .find({ dateCreated: { $gte: since } }, { projection: { sid: 1 } })
+    .find(
+      { ...organizationQuery(), dateCreated: { $gte: since } },
+      { projection: { sid: 1 } }
+    )
     .sort({ dateCreated: -1 })
     .limit(100)
     .toArray();
@@ -223,6 +232,7 @@ async function mongoHasUnlistedMessages(): Promise<boolean> {
 
 export function invalidateInboxCache(): void {
   cachedRows = null;
+  cachedOrganizationId = null;
   cachedLatestMessageAt = 0;
   cachedMessageSids.clear();
 }
@@ -303,9 +313,17 @@ async function rememberRecentMessageSids(): Promise<void> {
 export async function listStoredConversations(): Promise<
   ConversationAssignment[]
 > {
-  if (cachedRows && !(await mongoHasUnlistedMessages())) return cachedRows;
+  const organizationId = requireOrganizationId();
+  if (
+    cachedRows &&
+    cachedOrganizationId === organizationId &&
+    !(await mongoHasUnlistedMessages())
+  ) {
+    return cachedRows;
+  }
   const stored = await readStoredInbox();
   cachedRows = stored;
+  cachedOrganizationId = organizationId;
   rememberLatest(stored);
   await rememberRecentMessageSids();
   return stored;
@@ -320,6 +338,7 @@ export async function recordMessageOnConversation(
   );
   if (!isValidPhoneNumber(contactPhone)) return;
 
+  const organizationId = requireOrganizationId();
   const db = await getDb();
   const col = db.collection<ConversationAssignment>("conversations");
   const inbound = message.direction === "inbound";
@@ -340,7 +359,7 @@ export async function recordMessageOnConversation(
   if (nonStop) flagSet.hasNonStopInbound = true;
 
   await col.updateOne(
-    { phone: contactPhone },
+    { organizationId, phone: contactPhone },
     {
       $set: flagSet,
       ...(options.inserted ? { $inc: { messageCount: 1 } } : {}),
@@ -349,6 +368,7 @@ export async function recordMessageOnConversation(
 
   await col.updateOne(
     {
+      organizationId,
       phone: contactPhone,
       $or: [
         { lastMessageAt: { $exists: false } },
@@ -371,21 +391,22 @@ export async function getConversationIdForPhone(
   phone: string
 ): Promise<string> {
   const normalized = normalizePhone(phone);
+  const organizationId = requireOrganizationId();
   const db = await getDb();
   const col = db.collection<ConversationAssignment>("conversations");
   const existing = await col.findOne(
-    { phone: normalized },
+    { organizationId, phone: normalized },
     { projection: { id: 1 } }
   );
   if (existing?.id) return existing.id;
   const id = newConversationId();
   await col.updateOne(
-    { phone: normalized },
-    { $setOnInsert: { id, phone: normalized } },
+    { organizationId, phone: normalized },
+    { $setOnInsert: { organizationId, id, phone: normalized } },
     { upsert: true }
   );
   const again = await col.findOne(
-    { phone: normalized },
+    { organizationId, phone: normalized },
     { projection: { id: 1 } }
   );
   return again?.id || id;

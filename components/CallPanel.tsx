@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { apiFetch } from "@/lib/api-client";
-import LiveCallBar from "@/components/LiveCallBar";
 import { useVoiceCall } from "@/components/VoiceCallProvider";
 import { APP_INPUT, APP_LABEL, APP_SECTION } from "@/lib/app-layout";
 import { formatPhoneDisplay, normalizePhone } from "@/lib/phone";
@@ -50,10 +49,6 @@ export default function CallPanel({ prefillPhone, currentUser }: CallPanelProps)
   useEffect(() => {
     if (prefillPhone) setPhone(prefillPhone);
   }, [prefillPhone]);
-
-  useEffect(() => {
-    voice.initialize();
-  }, [voice.initialize]);
 
   const fetchHistory = useCallback(async () => {
     try {
@@ -212,16 +207,6 @@ export default function CallPanel({ prefillPhone, currentUser }: CallPanelProps)
           </div>
         </section>
       </div>
-
-      <LiveCallBar
-        callState={voice.callState}
-        activeNumber={voice.activeNumber}
-        isMuted={voice.isMuted}
-        error={voice.error}
-        fromNumber={voice.fromNumber}
-        onHangUp={voice.hangUp}
-        onToggleMute={voice.toggleMute}
-      />
     </div>
   );
 }

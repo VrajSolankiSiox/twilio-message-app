@@ -18,6 +18,7 @@ import {
   pricingFromTwilioMessage,
 } from "@/lib/twilio-cost";
 import { getDb } from "@/lib/mongodb";
+import { organizationQuery, requireOrganizationId } from "@/lib/org-context";
 import { normalizePhone } from "@/lib/phone";
 
 const STALE_SEND_MS = 20_000;
@@ -25,6 +26,7 @@ const LOCK_MS = 60_000;
 
 export interface CampaignDocument {
   _id: ObjectId;
+  organizationId: string;
   name: string;
   message: string;
   status: CampaignStatus;
@@ -279,10 +281,11 @@ export async function listCampaignsPaginated(
   const skip = (safePage - 1) * safeLimit;
   const now = new Date();
 
+  const orgFilter = organizationQuery();
   const [total, docs] = await Promise.all([
-    col.countDocuments({}),
+    col.countDocuments(orgFilter),
     col
-      .find({})
+      .find(orgFilter)
       .sort({ updatedAt: -1 })
       .skip(skip)
       .limit(safeLimit)
@@ -352,7 +355,7 @@ export async function getCampaignDetail(id: string): Promise<CampaignSummary | n
   if (!_id) return null;
   await reconcileStaleCampaigns();
   const col = await campaigns();
-  const doc = await col.findOne({ _id });
+  const doc = await col.findOne({ _id, ...organizationQuery() });
   if (!doc) return null;
   return serializeCampaign(doc);
 }
@@ -413,8 +416,10 @@ export async function createCampaign(input: {
     throw error;
   }
 
+  const organizationId = requireOrganizationId();
   const campaign: CampaignDocument = {
     _id: campaignId,
+    organizationId,
     name,
     message,
     status: "draft",
@@ -503,6 +508,7 @@ export async function claimCampaignForSend(
   const updated = await col.findOneAndUpdate(
     {
       _id,
+      ...organizationQuery(),
       status: { $in: statuses },
       $or: [{ lockUntil: null }, { lockUntil: { $lt: now } }],
     },
@@ -574,27 +580,10 @@ export async function nextPendingRecipients(
 }
 
 export async function phonesAlreadyMessaged(phones: string[]): Promise<Set<string>> {
-  const normalized = [...new Set(phones.map((phone) => normalizePhone(phone)).filter(Boolean))];
-  if (normalized.length === 0) return new Set();
-
-  const db = await getDb();
-  const rows = await db
-    .collection<{ to?: string; contactPhone?: string }>("messages")
-    .find(
-      {
-        direction: "outbound",
-        $or: [{ to: { $in: normalized } }, { contactPhone: { $in: normalized } }],
-      },
-      { projection: { to: 1, contactPhone: 1 } }
-    )
-    .toArray();
-
-  const found = new Set<string>();
-  for (const row of rows) {
-    if (row.to) found.add(normalizePhone(row.to));
-    if (row.contactPhone) found.add(normalizePhone(row.contactPhone));
-  }
-  return found;
+  const { phonesWithGlobalOutboundHistory } = await import(
+    "@/lib/db/customer-org-lock"
+  );
+  return phonesWithGlobalOutboundHistory(phones);
 }
 
 export async function markRecipientSkipped(
@@ -652,7 +641,7 @@ export async function getCampaignCostSummary(
   if (!_id) return null;
   await ensureIndexes();
   const campaignCol = await campaigns();
-  const campaign = await campaignCol.findOne({ _id });
+  const campaign = await campaignCol.findOne({ _id, ...organizationQuery() });
   if (!campaign) return null;
 
   const recipientCol = await recipients();
@@ -797,6 +786,7 @@ export async function getOriginatingCampaignMap(
   if (normalized.length === 0) return map;
 
   const db = await getDb();
+  const organizationId = requireOrganizationId();
   const convRows = await db
     .collection<{
       phone: string;
@@ -805,6 +795,7 @@ export async function getOriginatingCampaignMap(
     }>("conversations")
     .find(
       {
+        organizationId,
         phone: { $in: normalized },
         originatingCampaignId: { $exists: true, $nin: [null, ""] },
       },
@@ -892,7 +883,10 @@ export async function listCampaignCostRows(
 
   const rows: CampaignCostRow[] = [];
   for (const group of grouped) {
-    const campaign = await campaignCol.findOne({ _id: group._id });
+    const campaign = await campaignCol.findOne({
+      _id: group._id,
+      ...organizationQuery(),
+    });
     if (!campaign) continue;
     rows.push({
       campaignId: group._id.toString(),
@@ -908,7 +902,7 @@ export async function listCampaignCostRows(
   }
 
   const campaignsWithoutPrice = await campaignCol
-    .find({ sent: { $gt: 0 } })
+    .find({ ...organizationQuery(), sent: { $gt: 0 } })
     .sort({ updatedAt: -1 })
     .limit(limit)
     .toArray();
@@ -1123,7 +1117,7 @@ export async function deleteCampaign(id: string): Promise<boolean> {
   if (!_id) return false;
   await ensureIndexes();
   const col = await campaigns();
-  const current = await col.findOne({ _id });
+  const current = await col.findOne({ _id, ...organizationQuery() });
   if (!current) return false;
   if (current.status === "sending") {
     throw new Error("Pause or stop the campaign before deleting it");
