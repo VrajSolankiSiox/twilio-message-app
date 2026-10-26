@@ -17,12 +17,14 @@ import TabPanel from "@/components/TabPanel";
 import { VoiceCallProvider } from "@/components/VoiceCallProvider";
 import Campaigns from "@/components/Campaigns";
 import CostDashboard from "@/components/CostDashboard";
+import OverviewDashboard from "@/components/OverviewDashboard";
 import InvoiceGenerator from "@/components/InvoiceGenerator";
 import AppPageFrame from "@/components/AppPageFrame";
 import MessageNotificationControls from "@/components/messages/MessageNotificationControls";
 import PageLoadingSkeleton from "@/components/PageLoadingSkeleton";
 import UserManagement from "@/components/UserManagement";
 import { APP_TESTING_BADGE } from "@/lib/app-layout";
+import { ORGANIZATION_GREEN_ID } from "@/lib/organization-ids";
 import { apiFetch, setAuthToken } from "@/lib/api-client";
 import {
   isAdminTab,
@@ -106,6 +108,7 @@ export default function Dashboard() {
   const invoiceView = invoiceViewFromPath(pathname);
 
   const pageTitles: Record<NavTab, string> = {
+    overview: "Dashboard",
     messages: "Messages",
     calls: "Live Calls",
     campaign: "Campaigns",
@@ -153,9 +156,14 @@ export default function Dashboard() {
 
   const isTabMounted = (tab: NavTab) => mountedTabs.has(tab);
 
+  const greenCanvas =
+    user?.organizationId === ORGANIZATION_GREEN_ID ? "org-app-green" : "";
+
   if (!sessionReady || !user) {
     return (
-      <div className="flex h-dvh items-center justify-center bg-background">
+      <div
+        className={`flex h-dvh items-center justify-center bg-background ${greenCanvas}`}
+      >
         <div className="h-6 w-6 animate-spin rounded-full border-2 border-brand border-t-transparent" />
       </div>
     );
@@ -163,7 +171,7 @@ export default function Dashboard() {
 
   return (
     <VoiceCallProvider>
-      <div className="flex h-dvh overflow-hidden bg-background">
+      <div className={`flex h-dvh overflow-hidden bg-background ${greenCanvas}`}>
         <Sidebar
           activeTab={activeTab}
           onTabChange={handleTabChange}
@@ -214,6 +222,17 @@ export default function Dashboard() {
           {user ? <MessageNotificationControls variant="banner" /> : null}
 
           <div className="relative min-h-0 flex-1 overflow-hidden">
+            <TabPanel
+              activeTab={activeTab}
+              tab="overview"
+              mounted={isTabMounted("overview")}
+              className="min-h-0 overflow-hidden"
+            >
+              <AppPageFrame>
+                <OverviewDashboard userName={user.fullName} />
+              </AppPageFrame>
+            </TabPanel>
+
             <TabPanel
               activeTab={activeTab}
               tab="messages"

@@ -35,6 +35,74 @@ body {
   font-family: var(--font-geist-sans), system-ui, sans-serif;
 }
 
+/* RevenelX Green — primary + canvas; cards/bubbles stay --surface white */
+.org-app-green {
+  --background: #edf5f0;
+  --foreground: #14281f;
+  --brand: #059669;
+  --brand-hover: #047857;
+  --brand-light: #d1fae5;
+  --brand-muted: #ecfdf5;
+  --surface: #ffffff;
+  --border: #cfe4d8;
+  background-color: var(--background);
+  background-image:
+    radial-gradient(
+      ellipse 120% 80% at 100% -20%,
+      rgba(167, 243, 208, 0.2),
+      transparent 55%
+    ),
+    radial-gradient(
+      ellipse 90% 70% at -10% 100%,
+      rgba(209, 250, 229, 0.16),
+      transparent 50%
+    );
+}
+
+.org-app-green .nav-track,
+.org-app-green .mobile-nav-track {
+  background: linear-gradient(
+    180deg,
+    rgba(236, 253, 245, 0.95) 0%,
+    rgba(209, 250, 229, 0.72) 100%
+  );
+  border: none;
+  box-shadow:
+    inset 0 1px 2px rgba(255, 255, 255, 0.88),
+    inset 0 -1px 2px rgba(16, 185, 129, 0.08),
+    0 4px 24px -8px rgba(16, 185, 129, 0.18);
+}
+
+.org-app-green .mobile-nav-shell {
+  background: linear-gradient(
+    180deg,
+    rgba(237, 245, 240, 0.98) 0%,
+    rgba(255, 255, 255, 1) 100%
+  );
+  border-top-color: rgba(16, 185, 129, 0.12);
+}
+
+.org-app-green .liquid-blob--primary {
+  background: linear-gradient(
+    145deg,
+    rgba(187, 247, 208, 0.96) 0%,
+    rgba(74, 222, 128, 0.9) 45%,
+    rgba(16, 185, 129, 0.85) 100%
+  );
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.65),
+    inset 0 -1px 0 rgba(5, 150, 105, 0.1),
+    0 4px 14px rgba(5, 150, 105, 0.22);
+}
+
+.org-app-green .liquid-blob--trail {
+  background: linear-gradient(
+    135deg,
+    rgba(167, 243, 208, 0.75) 0%,
+    rgba(52, 211, 153, 0.55) 100%
+  );
+}
+
 input:focus,
 textarea:focus,
 select:focus {

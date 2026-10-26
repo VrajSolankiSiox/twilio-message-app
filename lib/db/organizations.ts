@@ -1,10 +1,13 @@
 import bcrypt from "bcryptjs";
 import { ObjectId } from "mongodb";
+import {
+  ORGANIZATION_BLUE_ID,
+  ORGANIZATION_GREEN_ID,
+} from "@/lib/organization-ids";
 import { getDb } from "@/lib/mongodb";
 import { normalizePhone } from "@/lib/phone";
 
-export const ORGANIZATION_GREEN_ID = "revenelx-green";
-export const ORGANIZATION_BLUE_ID = "revenelx-blue";
+export { ORGANIZATION_BLUE_ID, ORGANIZATION_GREEN_ID };
 
 export const BLUE_ADMIN_EMAIL = "sash@revenelx.com";
 const BLUE_ADMIN_PASSWORD = "Sash@123";
@@ -63,11 +66,11 @@ async function upsertOrganizations(
     { _id: ORGANIZATION_GREEN_ID },
     {
       $setOnInsert: {
-        name: "Revenelx Green",
+        name: "RevenelX Green",
         slug: "green",
         createdAt: now,
       },
-      $set: { twilioFromNumber: greenFromNumber() },
+      $set: { name: "RevenelX Green", twilioFromNumber: greenFromNumber() },
     },
     { upsert: true }
   );
@@ -76,11 +79,12 @@ async function upsertOrganizations(
     { _id: ORGANIZATION_BLUE_ID },
     {
       $setOnInsert: {
-        name: "Revenelx Blue",
+        name: "RevenelX Blue",
         slug: "blue",
         createdAt: now,
       },
       $set: {
+        name: "RevenelX Blue",
         twilioFromNumber: blueFromNumber() ?? greenFromNumber(),
       },
     },

@@ -19,6 +19,7 @@ export function isInvoiceAppPath(pathname: string): boolean {
 }
 
 export const TAB_ORDER: NavTab[] = [
+  "overview",
   "messages",
   "calls",
   "campaign",
@@ -28,6 +29,7 @@ export const TAB_ORDER: NavTab[] = [
 ];
 
 export const TAB_ROUTES: Record<NavTab, string> = {
+  overview: "/dashboard",
   messages: "/messages",
   calls: "/calls",
   campaign: "/campaign",

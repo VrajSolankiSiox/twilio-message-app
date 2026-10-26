@@ -2,11 +2,13 @@
 
 import { useRouter } from "next/navigation";
 import { useCallback, useLayoutEffect, useRef, useState } from "react";
-import Logo from "@/components/Logo";
+import OrgSidebarHeader from "@/components/OrgSidebarHeader";
 import { NAV_ITEMS } from "@/lib/nav-items";
+import { orgSidebarVariant } from "@/lib/org-sidebar";
 import { tabToPath } from "@/lib/navigation";
 
 export type NavTab =
+  | "overview"
   | "messages"
   | "calls"
   | "campaign"
@@ -17,7 +19,13 @@ export type NavTab =
 interface SidebarProps {
   activeTab: NavTab;
   onTabChange: (tab: NavTab) => void;
-  user: { fullName: string; email: string; role: string } | null;
+  user: {
+    fullName: string;
+    email: string;
+    role: string;
+    organizationId?: string;
+    organizationName?: string;
+  } | null;
   isAdmin: boolean;
   onLogout: () => void;
 }
@@ -256,11 +264,18 @@ export default function Sidebar({
         ? activeTab
         : null;
 
+  const greenSidebar = orgSidebarVariant(user?.organizationId) === "green";
+
   return (
-    <aside className="hidden h-full min-h-0 w-64 shrink-0 flex-col border-r border-border bg-surface lg:flex">
-      <div className="border-b border-border px-5 py-5">
-        <Logo size="sm" showText layout="stacked" />
-      </div>
+    <aside
+      className={`hidden h-full min-h-0 w-64 shrink-0 flex-col border-r border-border lg:flex ${
+        greenSidebar ? "bg-background" : "bg-surface"
+      }`}
+    >
+      <OrgSidebarHeader
+        organizationId={user?.organizationId}
+        organizationName={user?.organizationName}
+      />
 
       <nav
         ref={navRef}
@@ -329,7 +344,11 @@ export default function Sidebar({
         })}
       </nav>
 
-      <div className="border-t border-border p-4">
+      <div
+        className={`border-t border-border p-4 ${
+          greenSidebar ? "bg-background" : "bg-surface"
+        }`}
+      >
         {user && (
           <div className="mb-3 flex items-center gap-3 rounded-xl bg-brand-muted/60 px-3 py-3">
             <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-brand text-sm font-semibold text-white">

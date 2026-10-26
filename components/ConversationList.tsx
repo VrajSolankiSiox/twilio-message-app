@@ -315,7 +315,7 @@ export default function ConversationList({
                 )}
                 {conv.originatingCampaign ? (
                   <span
-                    className="max-w-full truncate rounded-md bg-violet-50 px-1.5 py-0.5 text-[10px] font-medium text-violet-700"
+                    className="max-w-full truncate rounded-md bg-brand-muted px-1.5 py-0.5 text-[10px] font-medium text-brand"
                     title={conv.originatingCampaign.name}
                   >
                     {conv.originatingCampaign.name}

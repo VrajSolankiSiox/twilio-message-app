@@ -101,6 +101,7 @@ const routes: Route[] = [
   route("POST", /^\/api\/twilio\/call-status$/, () => import("@/app/api/twilio/call-status/route")),
   route("GET", /^\/api\/twilio\/message-status$/, () => import("@/app/api/twilio/message-status/route")),
   route("POST", /^\/api\/twilio\/message-status$/, () => import("@/app/api/twilio/message-status/route")),
+  route("GET", /^\/api\/overview$/, () => import("@/app/api/overview/route")),
   route("GET", /^\/api\/cost\/summary$/, () => import("@/app/api/cost/summary/route")),
   route("GET", /^\/api\/cost\/usage$/, () => import("@/app/api/cost/usage/route")),
   route("GET", /^\/api\/cost\/campaigns$/, () => import("@/app/api/cost/campaigns/route")),

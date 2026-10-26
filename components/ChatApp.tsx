@@ -1491,7 +1491,7 @@ export default function ChatApp({ organizationId }: { organizationId: string }) 
   };
 
   return (
-    <div className="flex h-full min-h-0 w-full flex-col overflow-hidden bg-surface">
+    <div className="flex h-full min-h-0 w-full flex-col overflow-hidden bg-background">
       <div className="flex min-h-0 flex-1 overflow-hidden">
         {/* Inbox column — filters + list (no full-width toolbar) */}
         <div
@@ -1551,7 +1551,7 @@ export default function ChatApp({ organizationId }: { organizationId: string }) 
 
         {/* Chat — full column height from top of split */}
         <div
-          className={`min-h-0 min-w-0 flex-1 flex-col ${
+          className={`min-h-0 min-w-0 flex-1 flex-col bg-background ${
             mobilePane === "list" ? "hidden lg:flex" : "flex"
           }`}
         >
@@ -1644,7 +1644,7 @@ export default function ChatApp({ organizationId }: { organizationId: string }) 
                             {selectedConversation.originatingCampaign.name}
                           </Link>
                         ) : (
-                          <span className="font-medium text-zinc-600">
+                          <span className="font-medium text-brand">
                             {selectedConversation.originatingCampaign.name}
                           </span>
                         )}
@@ -1756,7 +1756,7 @@ export default function ChatApp({ organizationId }: { organizationId: string }) 
               <div
                 ref={messagesContainerRef}
                 onScroll={handleMessagesScroll}
-                className="min-h-0 flex-1 overflow-y-auto bg-[#f9f8fd] px-4 py-4 sm:px-6 sm:py-5"
+                className="min-h-0 flex-1 overflow-y-auto bg-background px-4 py-4 sm:px-6 sm:py-5"
               >
                 <div className="w-full space-y-1">
                   {loadingThread && selectedConversation.messages.length === 0 && (
@@ -1900,7 +1900,7 @@ export default function ChatApp({ organizationId }: { organizationId: string }) 
 
             </>
           ) : (
-            <div className="flex flex-1 flex-col items-center justify-center gap-3 bg-[#f9f8fd] text-zinc-400">
+            <div className="flex flex-1 flex-col items-center justify-center gap-3 bg-background text-zinc-400">
               <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-brand-light">
                 <svg
                   className="h-8 w-8 text-brand"
