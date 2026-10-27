@@ -93,7 +93,7 @@ export async function verifySessionToken(
     if (!organizationId) {
       const user = await findUserById(payload.userId);
       if (!user) return null;
-      organizationId = user.organizationId;
+      organizationId = user.organizationId ?? ORGANIZATION_GREEN_ID;
       organizationName = await organizationNameForUser(user);
     }
 

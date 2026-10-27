@@ -65,12 +65,11 @@ async function upsertOrganizations(
   await orgs.updateOne(
     { _id: ORGANIZATION_GREEN_ID },
     {
+      $set: { name: "RevenelX Green", twilioFromNumber: greenFromNumber() },
       $setOnInsert: {
-        name: "RevenelX Green",
         slug: "green",
         createdAt: now,
       },
-      $set: { name: "RevenelX Green", twilioFromNumber: greenFromNumber() },
     },
     { upsert: true }
   );
@@ -78,14 +77,13 @@ async function upsertOrganizations(
   await orgs.updateOne(
     { _id: ORGANIZATION_BLUE_ID },
     {
-      $setOnInsert: {
-        name: "RevenelX Blue",
-        slug: "blue",
-        createdAt: now,
-      },
       $set: {
         name: "RevenelX Blue",
         twilioFromNumber: blueFromNumber() ?? greenFromNumber(),
+      },
+      $setOnInsert: {
+        slug: "blue",
+        createdAt: now,
       },
     },
     { upsert: true }

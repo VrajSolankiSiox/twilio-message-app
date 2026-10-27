@@ -193,11 +193,13 @@ export async function POST(request: NextRequest) {
     const failed = results.length - sent;
 
     return NextResponse.json({ results, sent, failed, total: results.length });
-  } catch {
-    return NextResponse.json(
-      { error: "Invalid request" },
-      { status: 400 }
-    );
+  } catch (err) {
+    console.error("POST /api/send failed:", err);
+    const message =
+      err instanceof Error ? err.message : "Failed to send message";
+    const status =
+      message === "Organization context is required" ? 500 : 400;
+    return NextResponse.json({ error: message }, { status });
   }
   });
 }
