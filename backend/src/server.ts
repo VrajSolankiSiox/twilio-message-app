@@ -129,13 +129,38 @@ function route(
   return { method, pattern, load, params };
 }
 
+const PRODUCTION_WEB_ORIGINS = ["https://twilio-message-app-eb4l.vercel.app"];
+
 function allowedOrigins(): string[] {
   const configured = process.env.CORS_ORIGINS?.split(",")
     .map((origin) => origin.trim())
-    .filter(Boolean);
-  if (configured && configured.length > 0) return configured;
-  if (process.env.NODE_ENV === "production") return [];
-  return ["http://localhost:3000"];
+    .filter(Boolean) ?? [];
+  const local =
+    process.env.NODE_ENV === "production"
+      ? []
+      : [
+          "http://localhost:3000",
+          "http://127.0.0.1:3000",
+          "http://localhost:3001",
+          "http://127.0.0.1:3001",
+        ];
+  return [...new Set([...PRODUCTION_WEB_ORIGINS, ...configured, ...local])];
+}
+
+function isAllowedOrigin(origin: string | undefined): boolean {
+  if (!origin) return false;
+  if (allowedOrigins().includes(origin)) return true;
+  try {
+    const url = new URL(origin);
+    return (
+      url.protocol === "https:" &&
+      (url.hostname === "twilio-message-app-eb4l.vercel.app" ||
+        url.hostname.endsWith(".vercel.app") &&
+          url.hostname.startsWith("twilio-message-app-eb4l"))
+    );
+  } catch {
+    return false;
+  }
 }
 
 function corsHeaders(origin: string | undefined): Record<string, string> {
@@ -143,9 +168,10 @@ function corsHeaders(origin: string | undefined): Record<string, string> {
     "Access-Control-Allow-Methods": "GET,POST,PUT,PATCH,DELETE,OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Twilio-Signature",
     "Access-Control-Allow-Credentials": "true",
+    "Access-Control-Max-Age": "86400",
     Vary: "Origin",
   };
-  if (origin && allowedOrigins().includes(origin)) {
+  if (isAllowedOrigin(origin) && origin) {
     headers["Access-Control-Allow-Origin"] = origin;
   }
   return headers;

@@ -70,7 +70,14 @@ function LoginForm() {
         body: JSON.stringify({ email, password }),
       });
 
-      const data = await res.json();
+      const data = (await res.json().catch(() => null)) as {
+        error?: string;
+        token?: string;
+      } | null;
+      if (!data) {
+        setError("Login failed. The server did not return a valid response.");
+        return;
+      }
 
       if (!res.ok) {
         setError(data.error || "Login failed");
