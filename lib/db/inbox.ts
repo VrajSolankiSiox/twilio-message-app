@@ -191,31 +191,38 @@ async function persistInboxSummaries(
     { $set: { version: SUMMARY_VERSION, builtAt: now } },
     { upsert: true }
   );
-  cachedRows = null;
+  inboxCache.delete(requireOrganizationId());
 }
 
-let cachedRows: ConversationAssignment[] | null = null;
-let cachedOrganizationId: string | null = null;
-let cachedLatestMessageAt = 0;
-const cachedMessageSids = new Set<string>();
+interface InboxCacheEntry {
+  rows: ConversationAssignment[];
+  latestMessageAt: number;
+  messageSids: Set<string>;
+}
+
+const inboxCache = new Map<string, InboxCacheEntry>();
 
 function stampOf(value: Date | undefined | null): number {
   return value instanceof Date ? value.getTime() : 0;
 }
 
-function rememberLatest(rows: ConversationAssignment[]): void {
+function rememberLatest(entry: InboxCacheEntry, rows: ConversationAssignment[]): void {
   let latest = 0;
   for (const row of rows) {
     const at = stampOf(row.lastMessageAt);
     if (at > latest) latest = at;
   }
-  cachedLatestMessageAt = latest;
+  entry.latestMessageAt = latest;
+}
+
+function cacheForCurrentOrg(): InboxCacheEntry | null {
+  return inboxCache.get(requireOrganizationId()) ?? null;
 }
 
 /** Messages written by the Vercel webhook that this process has not listed yet. */
-async function mongoHasUnlistedMessages(): Promise<boolean> {
+async function mongoHasUnlistedMessages(entry: InboxCacheEntry): Promise<boolean> {
   const db = await getDb();
-  const since = new Date(Math.max(0, cachedLatestMessageAt - 10 * 60 * 1000));
+  const since = new Date(Math.max(0, entry.latestMessageAt - 10 * 60 * 1000));
   const recent = await db
     .collection<StoredMessage>("messages")
     .find(
@@ -227,14 +234,11 @@ async function mongoHasUnlistedMessages(): Promise<boolean> {
     .toArray();
 
   if (recent.length === 0) return false;
-  return recent.some((message) => message.sid && !cachedMessageSids.has(message.sid));
+  return recent.some((message) => message.sid && !entry.messageSids.has(message.sid));
 }
 
 export function invalidateInboxCache(): void {
-  cachedRows = null;
-  cachedOrganizationId = null;
-  cachedLatestMessageAt = 0;
-  cachedMessageSids.clear();
+  inboxCache.clear();
 }
 
 export function noteCachedMessage(
@@ -247,10 +251,11 @@ export function noteCachedMessage(
   },
   inserted: boolean
 ): void {
-  if (!cachedRows) return;
+  const entry = cacheForCurrentOrg();
+  if (!entry) return;
   const normalized = normalizePhone(phone);
   const inbound = message.direction === "inbound";
-  const previous = cachedRows.find((row) => normalizePhone(row.phone) === normalized);
+  const previous = entry.rows.find((row) => normalizePhone(row.phone) === normalized);
   const next: ConversationAssignment = {
     ...(previous ?? {
       phone: normalized,
@@ -259,11 +264,12 @@ export function noteCachedMessage(
       assignedToName: null,
       assignedToEmail: null,
       assignedAt: null,
-      closedAt: inbound ? null : null,
+      closedAt: null,
       closedByUserId: null,
       closedByName: null,
       updatedAt: new Date(),
     }),
+    organizationId: requireOrganizationId(),
     lastMessageAt: message.dateCreated,
     lastBody: message.body || "",
     lastDirection: message.direction,
@@ -275,38 +281,42 @@ export function noteCachedMessage(
     updatedAt: new Date(),
     ...(inbound ? { closedAt: null, closedByUserId: null, closedByName: null } : {}),
   };
-  cachedRows = [
+  entry.rows = [
     next,
-    ...cachedRows.filter((row) => normalizePhone(row.phone) !== normalized),
+    ...entry.rows.filter((row) => normalizePhone(row.phone) !== normalized),
   ];
   const at = message.dateCreated.getTime();
-  if (at > cachedLatestMessageAt) cachedLatestMessageAt = at;
-  if (message.sid) cachedMessageSids.add(message.sid);
+  if (at > entry.latestMessageAt) entry.latestMessageAt = at;
+  if (message.sid) entry.messageSids.add(message.sid);
 }
 
 export function patchCachedConversation(
   phone: string,
   fields: Partial<ConversationAssignment>
 ): void {
-  if (!cachedRows) return;
+  const entry = cacheForCurrentOrg();
+  if (!entry) return;
   const normalized = normalizePhone(phone);
-  cachedRows = cachedRows.map((row) =>
+  entry.rows = entry.rows.map((row) =>
     normalizePhone(row.phone) === normalized ? { ...row, ...fields } : row
   );
 }
 
-async function rememberRecentMessageSids(): Promise<void> {
+async function rememberRecentMessageSids(entry: InboxCacheEntry): Promise<void> {
   const db = await getDb();
-  const since = new Date(Math.max(0, cachedLatestMessageAt - 10 * 60 * 1000));
+  const since = new Date(Math.max(0, entry.latestMessageAt - 10 * 60 * 1000));
   const recent = await db
     .collection<StoredMessage>("messages")
-    .find({ dateCreated: { $gte: since } }, { projection: { sid: 1 } })
+    .find(
+      { ...organizationQuery(), dateCreated: { $gte: since } },
+      { projection: { sid: 1 } }
+    )
     .sort({ dateCreated: -1 })
     .limit(100)
     .toArray();
-  cachedMessageSids.clear();
+  entry.messageSids.clear();
   for (const message of recent) {
-    if (message.sid) cachedMessageSids.add(message.sid);
+    if (message.sid) entry.messageSids.add(message.sid);
   }
 }
 
@@ -314,18 +324,19 @@ export async function listStoredConversations(): Promise<
   ConversationAssignment[]
 > {
   const organizationId = requireOrganizationId();
-  if (
-    cachedRows &&
-    cachedOrganizationId === organizationId &&
-    !(await mongoHasUnlistedMessages())
-  ) {
-    return cachedRows;
+  const cached = inboxCache.get(organizationId);
+  if (cached && !(await mongoHasUnlistedMessages(cached))) {
+    return cached.rows;
   }
   const stored = await readStoredInbox();
-  cachedRows = stored;
-  cachedOrganizationId = organizationId;
-  rememberLatest(stored);
-  await rememberRecentMessageSids();
+  const entry: InboxCacheEntry = {
+    rows: stored,
+    latestMessageAt: 0,
+    messageSids: new Set<string>(),
+  };
+  rememberLatest(entry, stored);
+  inboxCache.set(organizationId, entry);
+  await rememberRecentMessageSids(entry);
   return stored;
 }
 
