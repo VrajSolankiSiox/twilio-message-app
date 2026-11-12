@@ -1,13 +1,15 @@
-# HTTP/3 is off. Browsers that follow Alt-Svc open WebSockets on h3,
-# and those handshakes finish with no bytes instead of HTTP 101.
+# Chrome keeps a cached HTTP/3 endpoint for this host. WebSocket upgrades
+# on that path never finish, so the inbox falls back to polling.
+# HTTP/1.1 makes the browser use a normal Upgrade handshake.
 {
 	servers {
-		protocols h1 h2
+		protocols h1
 	}
 }
 
 revenelx.duckdns.org {
 	reverse_proxy 127.0.0.1:4000 {
+		flush_interval -1
 		transport http {
 			versions 1.1
 		}

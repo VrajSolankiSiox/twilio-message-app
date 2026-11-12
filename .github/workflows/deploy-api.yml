@@ -19,5 +19,15 @@ jobs:
           script: |
             cd ~/revenelxapp/twilio-message-app
             git pull origin main
+            if [ -d /opt/revenelx/.git ]; then
+              sudo -n git -C /opt/revenelx pull origin main
+            fi
             sudo -n systemctl restart revenelx-api
             sudo -n systemctl is-active revenelx-api
+            if command -v caddy >/dev/null 2>&1; then
+              CADDY_SRC="$HOME/revenelxapp/twilio-message-app/backend/deploy/Caddyfile"
+              if sudo -n caddy validate --config "$CADDY_SRC"; then
+                sudo -n cp "$CADDY_SRC" /etc/caddy/Caddyfile
+                sudo -n systemctl reload caddy || sudo -n systemctl restart caddy
+              fi
+            fi

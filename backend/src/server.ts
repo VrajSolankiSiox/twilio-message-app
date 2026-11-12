@@ -375,7 +375,7 @@ const server = createServer((req, res) => {
   void handleHttp(req, res);
 });
 
-const wss = new WebSocketServer({ noServer: true });
+const wss = new WebSocketServer({ noServer: true, perMessageDeflate: false });
 
 function rejectUpgrade(socket: Duplex, status: 401 | 403, reason: string) {
   if (socket.destroyed) return;
@@ -387,6 +387,7 @@ function rejectUpgrade(socket: Duplex, status: 401 | 403, reason: string) {
 }
 
 server.on("upgrade", (req, socket, head) => {
+  socket.setTimeout(0);
   let url: URL;
   try {
     url = new URL(req.url || "/", "http://localhost");
