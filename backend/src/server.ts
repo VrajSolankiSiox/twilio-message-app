@@ -391,9 +391,21 @@ server.on("upgrade", (req, socket, head) => {
   try {
     url = new URL(req.url || "/", "http://localhost");
   } catch {
+    console.log("[WS] Upgrade received", {
+      url: req.url?.split("?")[0],
+      host: req.headers.host,
+      origin: req.headers.origin,
+      hasToken: false,
+    });
     rejectUpgrade(socket, 401, "Unauthorized");
     return;
   }
+  console.log("[WS] Upgrade received", {
+    url: url.pathname,
+    host: req.headers.host,
+    origin: req.headers.origin,
+    hasToken: Boolean(url.searchParams.get("token")),
+  });
   if (url.pathname !== "/ws") {
     socket.destroy();
     return;
@@ -405,6 +417,10 @@ server.on("upgrade", (req, socket, head) => {
     isAllowedOrigin(origin) ||
     (localServer && isLocalBrowserOrigin(origin));
   if (!originAllowed) {
+    console.warn("[WS] Origin rejected", {
+      origin,
+      host: req.headers.host,
+    });
     rejectUpgrade(socket, 403, "Forbidden");
     return;
   }
@@ -414,10 +430,13 @@ server.on("upgrade", (req, socket, head) => {
       if (socket.destroyed) return;
       socket.setTimeout(0);
       if (!session) {
-        console.warn("WebSocket upgrade rejected: session was not accepted");
+        console.warn("[WS] Session rejected");
         rejectUpgrade(socket, 401, "Unauthorized");
         return;
       }
+      console.log("[WS] Session accepted", {
+        organizationId: session.organizationId,
+      });
       wss.handleUpgrade(req, socket, head, (ws) => {
         sockets.set(ws, session.organizationId);
         ws.send(JSON.stringify({ type: "ready" }));
