@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { apiFetch, getAuthToken, wsBase } from "@/lib/api-client";
+import { apiFetch, getAuthToken, setAuthToken, wsBase } from "@/lib/api-client";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import ConversationList from "@/components/ConversationList";
 import InboxFilters from "@/components/messages/InboxFilters";
@@ -495,6 +495,11 @@ export default function ChatApp({ organizationId }: { organizationId: string }) 
         const res = await apiFetch(`/api/twilio/messages/thread?${params}`, {
           cache: "no-store",
         });
+        if (res.status === 401) {
+          setAuthToken(null);
+          window.location.assign("/login");
+          return;
+        }
         const data = await res.json();
         if (!res.ok) {
           if (res.status === 403) {
@@ -720,6 +725,11 @@ export default function ChatApp({ organizationId }: { organizationId: string }) 
         const res = await apiFetch(`/api/twilio/messages?${params}`, {
           cache: "no-store",
         });
+        if (res.status === 401) {
+          setAuthToken(null);
+          window.location.assign("/login");
+          return;
+        }
         const data = await res.json();
 
         if (!res.ok) {
@@ -1012,12 +1022,14 @@ export default function ChatApp({ organizationId }: { organizationId: string }) 
         `${base}/ws?token=${encodeURIComponent(token)}`
       );
       socket = active;
+      let sawOpen = false;
       const abandoned = () => stopped || socket !== active;
       active.onopen = () => {
         if (abandoned()) {
           active.close();
           return;
         }
+        sawOpen = true;
         attempt = 0;
         clearPoll();
         const reconnect = hasConnected;
@@ -1149,8 +1161,14 @@ export default function ChatApp({ organizationId }: { organizationId: string }) 
       active.onclose = () => {
         if (socket === active) socket = null;
         if (stopped) return;
-        if (hasConnected) disconnectedAt = Date.now();
         startFallbackPoll();
+        if (!sawOpen) {
+          attempt += 1;
+          if (attempt >= 2) return;
+          retryTimer = window.setTimeout(connect, 15000);
+          return;
+        }
+        if (hasConnected) disconnectedAt = Date.now();
         attempt += 1;
         const delay = Math.min(15000, 1000 * 2 ** Math.min(attempt, 4));
         retryTimer = window.setTimeout(connect, delay);
@@ -1158,7 +1176,7 @@ export default function ChatApp({ organizationId }: { organizationId: string }) 
     };
 
     startFallbackPoll();
-    connect();
+    retryTimer = window.setTimeout(connect, 0);
 
     return () => {
       stopped = true;

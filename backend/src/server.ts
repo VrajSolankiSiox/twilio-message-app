@@ -1,6 +1,7 @@
 import { timingSafeEqual } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import type { Duplex } from "node:stream";
 import { resolve } from "node:path";
 import { WebSocketServer, type WebSocket } from "ws";
 import { NextRequest } from "next/server";
@@ -374,8 +375,23 @@ const server = createServer((req, res) => {
 
 const wss = new WebSocketServer({ noServer: true });
 
+function rejectUpgrade(socket: Duplex, status: 401 | 403, reason: string) {
+  if (socket.destroyed) return;
+  const body = Buffer.from(reason);
+  const title = status === 401 ? "Unauthorized" : "Forbidden";
+  socket.end(
+    `HTTP/1.1 ${status} ${title}\r\nConnection: close\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: ${body.length}\r\n\r\n${reason}`
+  );
+}
+
 server.on("upgrade", (req, socket, head) => {
-  const url = new URL(req.url || "/", "http://localhost");
+  let url: URL;
+  try {
+    url = new URL(req.url || "/", "http://localhost");
+  } catch {
+    rejectUpgrade(socket, 401, "Unauthorized");
+    return;
+  }
   if (url.pathname !== "/ws") {
     socket.destroy();
     return;
@@ -387,24 +403,29 @@ server.on("upgrade", (req, socket, head) => {
     isAllowedOrigin(origin) ||
     (localServer && isLocalBrowserOrigin(origin));
   if (!originAllowed) {
-    socket.write("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");
-    socket.destroy();
+    rejectUpgrade(socket, 403, "Forbidden");
     return;
   }
-  const token = url.searchParams.get("token");
-  void verifySessionToken(token || "").then((session) => {
-    if (!session) {
-      socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
-      socket.destroy();
-      return;
-    }
-    wss.handleUpgrade(req, socket, head, (ws) => {
-      sockets.set(ws, session.organizationId);
-      ws.send(JSON.stringify({ type: "ready" }));
-      ws.on("close", () => sockets.delete(ws));
-      ws.on("error", () => sockets.delete(ws));
+  const token = url.searchParams.get("token")?.trim() ?? "";
+  void verifySessionToken(token)
+    .then((session) => {
+      if (socket.destroyed) return;
+      if (!session) {
+        console.warn("WebSocket upgrade rejected: session was not accepted");
+        rejectUpgrade(socket, 401, "Unauthorized");
+        return;
+      }
+      wss.handleUpgrade(req, socket, head, (ws) => {
+        sockets.set(ws, session.organizationId);
+        ws.send(JSON.stringify({ type: "ready" }));
+        ws.on("close", () => sockets.delete(ws));
+        ws.on("error", () => sockets.delete(ws));
+      });
+    })
+    .catch((error) => {
+      console.error("WebSocket upgrade failed:", error);
+      rejectUpgrade(socket, 401, "Unauthorized");
     });
-  });
 });
 
 subscribeRealtime(broadcast);

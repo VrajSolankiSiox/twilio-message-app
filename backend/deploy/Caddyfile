@@ -1,5 +1,15 @@
-# Replace api.example.com with your domain.
-# Caddy obtains a certificate and proxies HTTPS and WSS to the API.
-api.example.com {
-	reverse_proxy 127.0.0.1:4000
+# HTTP/3 is off. Browsers that follow Alt-Svc open WebSockets on h3,
+# and those handshakes finish with no bytes instead of HTTP 101.
+{
+	servers {
+		protocols h1 h2
+	}
+}
+
+revenelx.duckdns.org {
+	reverse_proxy 127.0.0.1:4000 {
+		transport http {
+			versions 1.1
+		}
+	}
 }
