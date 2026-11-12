@@ -10,7 +10,6 @@ import { tabToPath } from "@/lib/navigation";
 export type NavTab =
   | "overview"
   | "messages"
-  | "calls"
   | "campaign"
   | "cost"
   | "team"

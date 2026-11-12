@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useEffect, type ReactNode } from "react";
+import { createContext, useContext, type ReactNode } from "react";
 import LiveCallBar from "@/components/LiveCallBar";
 import { useTwilioVoice } from "@/hooks/useTwilioVoice";
 
@@ -10,10 +10,6 @@ const VoiceCallContext = createContext<VoiceContextValue | null>(null);
 
 export function VoiceCallProvider({ children }: { children: ReactNode }) {
   const voice = useTwilioVoice();
-
-  useEffect(() => {
-    voice.initialize();
-  }, [voice.initialize]);
 
   return (
     <VoiceCallContext.Provider value={voice}>

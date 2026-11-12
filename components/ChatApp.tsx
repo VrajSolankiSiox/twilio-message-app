@@ -7,7 +7,6 @@ import ConversationList from "@/components/ConversationList";
 import InboxFilters from "@/components/messages/InboxFilters";
 import NewContactComposer from "@/components/messages/NewContactComposer";
 import MessageNotificationControls from "@/components/messages/MessageNotificationControls";
-import { useVoiceCall } from "@/components/VoiceCallProvider";
 import Link from "next/link";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { CAMPAIGN_ROUTES } from "@/lib/campaign-navigation";
@@ -259,7 +258,6 @@ export default function ChatApp({ organizationId }: { organizationId: string }) 
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const relativeNow = useRelativeTimeClock();
-  const voice = useVoiceCall();
   const isMobile = useIsMobile();
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
@@ -922,7 +920,6 @@ export default function ChatApp({ organizationId }: { organizationId: string }) 
     let stopped = false;
     let attempt = 0;
     let retryTimer: number | null = null;
-    let handshakeTimer: number | null = null;
     let pollTimer: number | null = null;
     let hasConnected = false;
     let disconnectedAt: number | null = null;
@@ -1025,16 +1022,9 @@ export default function ChatApp({ organizationId }: { organizationId: string }) 
       socket = active;
       let sawOpen = false;
       const abandoned = () => stopped || socket !== active;
-      if (handshakeTimer !== null) window.clearTimeout(handshakeTimer);
-      handshakeTimer = window.setTimeout(() => {
-        if (socket === active && active.readyState === WebSocket.CONNECTING) {
-          active.close();
-        }
-      }, 8000);
       active.onopen = () => {
-        if (handshakeTimer !== null) window.clearTimeout(handshakeTimer);
         if (abandoned()) {
-          active.close();
+          if (active.readyState === WebSocket.OPEN) active.close();
           return;
         }
         sawOpen = true;
@@ -1167,7 +1157,6 @@ export default function ChatApp({ organizationId }: { organizationId: string }) 
         }
       };
       active.onclose = () => {
-        if (handshakeTimer !== null) window.clearTimeout(handshakeTimer);
         if (socket === active) socket = null;
         if (stopped) return;
         startFallbackPoll();
@@ -1188,7 +1177,6 @@ export default function ChatApp({ organizationId }: { organizationId: string }) 
       stopped = true;
       clearPoll();
       if (retryTimer !== null) window.clearTimeout(retryTimer);
-      if (handshakeTimer !== null) window.clearTimeout(handshakeTimer);
       if (socket?.readyState === WebSocket.OPEN) {
         socket.close();
       }
@@ -1831,43 +1819,6 @@ export default function ChatApp({ organizationId }: { organizationId: string }) 
                           </option>
                         ))}
                       </select>
-                    )}
-
-                    {currentUser && (
-                      <button
-                        type="button"
-                        onClick={() =>
-                          voice.startCall({
-                            to: normalizePhone(selectedConversation.phone),
-                            user: {
-                              userId: currentUser.id,
-                              fullName: currentUser.fullName,
-                            },
-                          })
-                        }
-                        disabled={
-                          voice.isInCall || Boolean(voice.voiceUnavailableHint)
-                        }
-                        className="flex h-8 w-8 items-center justify-center rounded-lg border border-brand/20 text-brand transition-colors hover:bg-brand hover:text-white disabled:opacity-50"
-                        title={
-                          voice.voiceUnavailableHint ?? "Call contact"
-                        }
-                        aria-label="Call contact"
-                      >
-                        <svg
-                          className="h-3.5 w-3.5"
-                          fill="none"
-                          viewBox="0 0 24 24"
-                          stroke="currentColor"
-                        >
-                          <path
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            strokeWidth={2}
-                            d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z"
-                          />
-                        </svg>
-                      </button>
                     )}
 
                     {selectedConversation.isClosed ? (

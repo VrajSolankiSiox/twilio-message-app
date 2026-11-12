@@ -9,12 +9,10 @@ import {
   useState,
   useTransition,
 } from "react";
-import CallPanel from "@/components/CallPanel";
 import ChatApp from "@/components/ChatApp";
 import MobileNav from "@/components/MobileNav";
 import Sidebar, { type NavTab } from "@/components/Sidebar";
 import TabPanel from "@/components/TabPanel";
-import { VoiceCallProvider } from "@/components/VoiceCallProvider";
 import Campaigns from "@/components/Campaigns";
 import CostDashboard from "@/components/CostDashboard";
 import OverviewDashboard from "@/components/OverviewDashboard";
@@ -57,7 +55,6 @@ export default function Dashboard() {
   const [mountedTabs, setMountedTabs] = useState<Set<NavTab>>(
     () => new Set([routeTab]),
   );
-  const [callPrefillPhone, setCallPrefillPhone] = useState<string | null>(null);
 
   const markTabMounted = useCallback((tab: NavTab) => {
     setMountedTabs((prev) => {
@@ -110,7 +107,6 @@ export default function Dashboard() {
   const pageTitles: Record<NavTab, string> = {
     overview: "Dashboard",
     messages: "Messages",
-    calls: "Live Calls",
     campaign: "Campaigns",
     cost: "Cost & Usage",
     team: isAdmin ? "Team Management" : "Teams",
@@ -170,8 +166,7 @@ export default function Dashboard() {
   }
 
   return (
-    <VoiceCallProvider>
-      <div className={`flex h-dvh overflow-hidden bg-background ${greenCanvas}`}>
+    <div className={`flex h-dvh overflow-hidden bg-background ${greenCanvas}`}>
         <Sidebar
           activeTab={activeTab}
           onTabChange={handleTabChange}
@@ -242,22 +237,6 @@ export default function Dashboard() {
               <ChatApp organizationId={user?.organizationId ?? ""} />
             </TabPanel>
 
-            <TabPanel
-              activeTab={activeTab}
-              tab="calls"
-              mounted={isTabMounted("calls")}
-              className="min-h-0 overflow-hidden"
-            >
-              <AppPageFrame fillHeight>
-                <CallPanel
-                  prefillPhone={callPrefillPhone}
-                  currentUser={
-                    user ? { id: user.id, fullName: user.fullName } : null
-                  }
-                />
-              </AppPageFrame>
-            </TabPanel>
-
             {isAdmin && (
               <TabPanel
                 activeTab={activeTab}
@@ -318,6 +297,5 @@ export default function Dashboard() {
           onTabChange={handleTabChange}
         />
       </div>
-    </VoiceCallProvider>
   );
 }

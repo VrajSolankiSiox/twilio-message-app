@@ -36,6 +36,11 @@ const nextConfig: NextConfig = {
         destination: "/campaign/:path*",
         permanent: true,
       },
+      {
+        source: "/calls",
+        destination: "/messages",
+        permanent: false,
+      },
     ];
   },
   images: {
