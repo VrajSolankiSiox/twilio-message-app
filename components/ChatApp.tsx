@@ -1008,10 +1008,16 @@ export default function ChatApp({ organizationId }: { organizationId: string }) 
       ) {
         return;
       }
-      socket = new WebSocket(
+      const active = new WebSocket(
         `${base}/ws?token=${encodeURIComponent(token)}`
       );
-      socket.onopen = () => {
+      socket = active;
+      const abandoned = () => stopped || socket !== active;
+      active.onopen = () => {
+        if (abandoned()) {
+          active.close();
+          return;
+        }
         attempt = 0;
         clearPoll();
         const reconnect = hasConnected;
@@ -1024,7 +1030,7 @@ export default function ChatApp({ organizationId }: { organizationId: string }) 
           void pollOpenInboxForNotifications(missedSince);
         }
       };
-      socket.onmessage = (event) => {
+      active.onmessage = (event) => {
         try {
           const data = JSON.parse(String(event.data)) as {
             type?: string;
@@ -1140,11 +1146,8 @@ export default function ChatApp({ organizationId }: { organizationId: string }) 
           // Ignore malformed frames.
         }
       };
-      socket.onerror = () => {
-        socket?.close();
-      };
-      socket.onclose = () => {
-        socket = null;
+      active.onclose = () => {
+        if (socket === active) socket = null;
         if (stopped) return;
         if (hasConnected) disconnectedAt = Date.now();
         startFallbackPoll();
@@ -1161,11 +1164,7 @@ export default function ChatApp({ organizationId }: { organizationId: string }) 
       stopped = true;
       clearPoll();
       if (retryTimer !== null) window.clearTimeout(retryTimer);
-      if (
-        socket &&
-        (socket.readyState === WebSocket.OPEN ||
-          socket.readyState === WebSocket.CONNECTING)
-      ) {
+      if (socket?.readyState === WebSocket.OPEN) {
         socket.close();
       }
     };

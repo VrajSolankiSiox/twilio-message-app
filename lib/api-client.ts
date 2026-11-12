@@ -29,13 +29,38 @@ export function apiUrl(path: string): string {
   return `${base}${path}`;
 }
 
+function pageHostname(): string {
+  if (typeof window === "undefined") return "";
+  return window.location.hostname;
+}
+
+function pageIsHttps(): boolean {
+  return typeof window !== "undefined" && window.location.protocol === "https:";
+}
+
+/** Absolute ws/wss origin. Never a relative URL, and never localhost from the HTTPS site. */
 export function wsBase(): string {
-  const configured = process.env.NEXT_PUBLIC_WS_URL?.trim();
-  if (configured) return configured.replace(/\/$/, "");
+  const onLocalPage =
+    pageHostname() === "localhost" || pageHostname() === "127.0.0.1";
+  let configured = process.env.NEXT_PUBLIC_WS_URL?.trim().replace(/\/$/, "") ?? "";
+  if (
+    configured &&
+    !onLocalPage &&
+    /\/\/(localhost|127\.0\.0\.1)(:|\/|$)/.test(configured)
+  ) {
+    configured = "";
+  }
+  if (configured.startsWith("ws://") && pageIsHttps()) {
+    configured = `wss://${configured.slice("ws://".length)}`;
+  }
+  if (configured.startsWith("wss://") || configured.startsWith("ws://")) {
+    return configured;
+  }
+
   const api = apiBase();
   if (api.startsWith("https://")) return `wss://${api.slice("https://".length)}`;
-  if (api.startsWith("http://")) return `ws://${api.slice("http://".length)}`;
-  return api;
+  if (api.startsWith("http://")) return pageIsHttps() ? "" : `ws://${api.slice("http://".length)}`;
+  return "";
 }
 
 function readStoredToken(): string | null {

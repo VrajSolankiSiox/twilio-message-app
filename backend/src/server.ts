@@ -382,11 +382,12 @@ server.on("upgrade", (req, socket, head) => {
   }
   const origin = req.headers.origin;
   const localServer = isLocalHostname(requestHost(req.headers.host));
-  if (
-    origin &&
-    !allowedOrigins().includes(origin) &&
-    !(localServer && isLocalBrowserOrigin(origin))
-  ) {
+  const originAllowed =
+    !origin ||
+    isAllowedOrigin(origin) ||
+    (localServer && isLocalBrowserOrigin(origin));
+  if (!originAllowed) {
+    socket.write("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");
     socket.destroy();
     return;
   }
