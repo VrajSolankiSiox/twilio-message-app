@@ -922,6 +922,7 @@ export default function ChatApp({ organizationId }: { organizationId: string }) 
     let stopped = false;
     let attempt = 0;
     let retryTimer: number | null = null;
+    let handshakeTimer: number | null = null;
     let pollTimer: number | null = null;
     let hasConnected = false;
     let disconnectedAt: number | null = null;
@@ -1024,7 +1025,14 @@ export default function ChatApp({ organizationId }: { organizationId: string }) 
       socket = active;
       let sawOpen = false;
       const abandoned = () => stopped || socket !== active;
+      if (handshakeTimer !== null) window.clearTimeout(handshakeTimer);
+      handshakeTimer = window.setTimeout(() => {
+        if (socket === active && active.readyState === WebSocket.CONNECTING) {
+          active.close();
+        }
+      }, 8000);
       active.onopen = () => {
+        if (handshakeTimer !== null) window.clearTimeout(handshakeTimer);
         if (abandoned()) {
           active.close();
           return;
@@ -1159,12 +1167,11 @@ export default function ChatApp({ organizationId }: { organizationId: string }) 
         }
       };
       active.onclose = () => {
+        if (handshakeTimer !== null) window.clearTimeout(handshakeTimer);
         if (socket === active) socket = null;
         if (stopped) return;
         startFallbackPoll();
         if (!sawOpen) {
-          attempt += 1;
-          if (attempt >= 2) return;
           retryTimer = window.setTimeout(connect, 15000);
           return;
         }
@@ -1175,13 +1182,13 @@ export default function ChatApp({ organizationId }: { organizationId: string }) 
       };
     };
 
-    startFallbackPoll();
     retryTimer = window.setTimeout(connect, 0);
 
     return () => {
       stopped = true;
       clearPoll();
       if (retryTimer !== null) window.clearTimeout(retryTimer);
+      if (handshakeTimer !== null) window.clearTimeout(handshakeTimer);
       if (socket?.readyState === WebSocket.OPEN) {
         socket.close();
       }

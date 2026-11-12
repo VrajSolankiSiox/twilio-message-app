@@ -196,8 +196,10 @@ function corsHeaders(origin: string | undefined): Record<string, string> {
     "Access-Control-Max-Age": "86400",
     Vary: "Origin",
   };
+  headers["Alt-Svc"] = "clear";
   if (isAllowedOrigin(origin) && origin) {
     headers["Access-Control-Allow-Origin"] = origin;
+    headers["Timing-Allow-Origin"] = origin;
   }
   return headers;
 }
@@ -410,6 +412,7 @@ server.on("upgrade", (req, socket, head) => {
   void verifySessionToken(token)
     .then((session) => {
       if (socket.destroyed) return;
+      socket.setTimeout(0);
       if (!session) {
         console.warn("WebSocket upgrade rejected: session was not accepted");
         rejectUpgrade(socket, 401, "Unauthorized");
