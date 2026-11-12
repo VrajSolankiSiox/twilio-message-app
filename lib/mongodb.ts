@@ -18,6 +18,11 @@ declare global {
   var _mongoClient: MongoClient | undefined;
   // eslint-disable-next-line no-var
   var _mongoClientUri: string | undefined;
+  // eslint-disable-next-line no-var
+  var _mongoConnectPromise: Promise<Db> | undefined;
+  /** Bumped on shutdown so an in-flight connect cannot publish a new client. */
+  // eslint-disable-next-line no-var
+  var _mongoGeneration: number | undefined;
 }
 
 function validateMongoUri(uri: string): void {
@@ -44,6 +49,8 @@ function shouldTryAlternateMongoUri(message: string): boolean {
   );
 }
 
+const DB_NAME = "twilio-sms";
+
 function mongoClientOptions() {
   return {
     /** Fail fast on a bad replica so another seed can be selected. */
@@ -51,6 +58,8 @@ function mongoClientOptions() {
     serverSelectionTimeoutMS: 20_000,
     /** Serverless / long-lived API: avoid stale sockets. */
     maxIdleTimeMS: 60_000,
+    /** Atlas M0 allows 500 connections; keep each process well under that. */
+    maxPoolSize: 10,
     ...(process.platform === "win32" ? { family: 4 as const } : {}),
   };
 }
@@ -74,54 +83,7 @@ function orderedMongoUris(): string[] {
   return unique;
 }
 
-function getClientForUri(uri: string): MongoClient {
-  validateMongoUri(uri);
-
-  if (global._mongoClient && global._mongoClientUri === uri) {
-    return global._mongoClient;
-  }
-
-  if (global._mongoClient) {
-    void global._mongoClient.close().catch(() => undefined);
-  }
-
-  global._mongoClient = new MongoClient(uri, mongoClientOptions());
-  global._mongoClientUri = uri;
-  return global._mongoClient;
-}
-
-export async function getDb(): Promise<Db> {
-  const uris = orderedMongoUris();
-  if (uris.length === 0) {
-    throw new Error(
-      "MONGODB_URI is not defined. Set MONGODB_URI or MONGODB_URI_STANDARD in environment variables."
-    );
-  }
-
-  let lastError: unknown;
-
-  for (let i = 0; i < uris.length; i++) {
-    const uri = uris[i]!;
-    try {
-      const client = getClientForUri(uri);
-      await client.connect();
-      return client.db("twilio-sms");
-    } catch (error) {
-      lastError = error;
-      const message =
-        error instanceof Error ? error.message : "Unknown database error";
-
-      const hasAnotherUri = i < uris.length - 1;
-      if (hasAnotherUri && shouldTryAlternateMongoUri(message)) {
-        console.warn(
-          `MongoDB connect failed (${message.slice(0, 120)}); retrying with alternate connection string.`
-        );
-        continue;
-      }
-      break;
-    }
-  }
-
+function connectionFailedError(lastError: unknown): Error {
   const message =
     lastError instanceof Error ? lastError.message : "Unknown database error";
   const hints: string[] = [];
@@ -141,5 +103,97 @@ export async function getDb(): Promise<Db> {
     );
   }
   const hint = hints.length > 0 ? ` ${hints.join(" ")}` : "";
-  throw new Error(`MongoDB connection failed: ${message}${hint}`);
+  return new Error(`MongoDB connection failed: ${message}${hint}`);
+}
+
+/**
+ * Try each URI at most once per cold start. A client is published only after
+ * connect() resolves, and a failed client is closed before the next URI is opened.
+ */
+async function connectMongo(generation: number): Promise<Db> {
+  const uris = orderedMongoUris();
+  if (uris.length === 0) {
+    throw new Error(
+      "MONGODB_URI is not defined. Set MONGODB_URI or MONGODB_URI_STANDARD in environment variables."
+    );
+  }
+
+  let lastError: unknown;
+
+  for (let i = 0; i < uris.length; i++) {
+    if ((global._mongoGeneration ?? 0) !== generation) {
+      throw new Error("MongoDB connect aborted");
+    }
+
+    const uri = uris[i]!;
+    validateMongoUri(uri);
+    const client = new MongoClient(uri, mongoClientOptions());
+
+    try {
+      await client.connect();
+    } catch (error) {
+      await client.close().catch(() => undefined);
+      if ((global._mongoGeneration ?? 0) !== generation) {
+        throw error instanceof Error ? error : new Error("MongoDB connect aborted");
+      }
+      lastError = error;
+      const message =
+        error instanceof Error ? error.message : "Unknown database error";
+      const hasAnotherUri = i < uris.length - 1;
+      if (hasAnotherUri && shouldTryAlternateMongoUri(message)) {
+        console.warn(
+          `MongoDB connect failed (${message.slice(0, 120)}); retrying with alternate connection string.`
+        );
+        continue;
+      }
+      break;
+    }
+
+    if ((global._mongoGeneration ?? 0) !== generation) {
+      await client.close().catch(() => undefined);
+      throw new Error("MongoDB connect aborted");
+    }
+
+    global._mongoClient = client;
+    global._mongoClientUri = uri;
+    return client.db(DB_NAME);
+  }
+
+  throw connectionFailedError(lastError);
+}
+
+export async function getDb(): Promise<Db> {
+  if (global._mongoClient) {
+    return global._mongoClient.db(DB_NAME);
+  }
+
+  if (!global._mongoConnectPromise) {
+    const generation = global._mongoGeneration ?? 0;
+    let pending!: Promise<Db>;
+    pending = connectMongo(generation).catch((error: unknown) => {
+      if (global._mongoConnectPromise === pending) {
+        global._mongoConnectPromise = undefined;
+      }
+      throw error;
+    });
+    global._mongoConnectPromise = pending;
+  }
+
+  return global._mongoConnectPromise;
+}
+
+/** Close the shared client. Safe to call when no client has connected yet. */
+export async function closeMongoClient(): Promise<void> {
+  global._mongoGeneration = (global._mongoGeneration ?? 0) + 1;
+  const pending = global._mongoConnectPromise;
+  global._mongoConnectPromise = undefined;
+  if (pending) {
+    await pending.catch(() => undefined);
+  }
+
+  const client = global._mongoClient;
+  global._mongoClient = undefined;
+  global._mongoClientUri = undefined;
+  if (!client) return;
+  await client.close();
 }

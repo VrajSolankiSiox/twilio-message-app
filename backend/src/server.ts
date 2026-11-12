@@ -1,3 +1,4 @@
+import { timingSafeEqual } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { resolve } from "node:path";
@@ -9,8 +10,9 @@ import {
   scheduleHeavyDataMigration,
 } from "@/lib/db/organizations";
 import { runWithOrganizationId } from "@/lib/org-context";
-import { subscribeRealtime, type RealtimeEvent } from "@/lib/realtime";
+import { markRealtimeHub, subscribeRealtime, type RealtimeEvent } from "@/lib/realtime";
 import { requestContext } from "@/lib/request-context";
+import { closeMongoClient } from "@/lib/mongodb";
 
 function loadEnvFile(filePath: string) {
   if (!existsSync(filePath)) return;
@@ -36,6 +38,7 @@ loadEnvFile(resolve(process.cwd(), "backend/.env"));
 loadEnvFile(resolve(process.cwd(), "backend/.env.local"));
 loadEnvFile(resolve(process.cwd(), ".env"));
 loadEnvFile(resolve(process.cwd(), ".env.local"));
+markRealtimeHub();
 
 const PORT = Number(process.env.PORT || process.env.API_PORT || 4000);
 const HOST = process.env.HOST?.trim() || "localhost";
@@ -83,24 +86,24 @@ const routes: Route[] = [
   route("GET", /^\/api\/users$/, () => import("@/app/api/users/route")),
   route("POST", /^\/api\/users$/, () => import("@/app/api/users/route")),
   route("GET", /^\/api\/call$/, () => import("@/app/api/call/route")),
-  route("POST", /^\/api\/send$/, () => import("@/app/api/send/route")),
-  route("POST", /^\/api\/contacts$/, () => import("@/app/api/contacts/route")),
-  route("POST", /^\/api\/conversations\/close$/, () => import("@/app/api/conversations/close/route")),
-  route("POST", /^\/api\/conversations\/assign$/, () => import("@/app/api/conversations/assign/route")),
-  route("GET", /^\/api\/twilio\/messages$/, () => import("@/app/api/twilio/messages/route")),
-  route("POST", /^\/api\/twilio\/messages\/read$/, () => import("@/app/api/twilio/messages/read/route")),
-  route("GET", /^\/api\/twilio\/messages\/thread$/, () => import("@/app/api/twilio/messages/thread/route")),
+  route("POST", /^\/api\/send$/, () => import("@/backend/routes/send")),
+  route("POST", /^\/api\/contacts$/, () => import("@/backend/routes/contacts")),
+  route("POST", /^\/api\/conversations\/close$/, () => import("@/backend/routes/conversations/close")),
+  route("POST", /^\/api\/conversations\/assign$/, () => import("@/backend/routes/conversations/assign")),
+  route("GET", /^\/api\/twilio\/messages$/, () => import("@/backend/routes/twilio/messages")),
+  route("POST", /^\/api\/twilio\/messages\/read$/, () => import("@/backend/routes/twilio/messages-read")),
+  route("GET", /^\/api\/twilio\/messages\/thread$/, () => import("@/backend/routes/twilio/messages-thread")),
   route("GET", /^\/api\/twilio\/token$/, () => import("@/app/api/twilio/token/route")),
-  route("GET", /^\/api\/twilio\/incoming$/, () => import("@/app/api/twilio/incoming/route")),
-  route("POST", /^\/api\/twilio\/incoming$/, () => import("@/app/api/twilio/incoming/route")),
+  route("GET", /^\/api\/twilio\/incoming$/, () => import("@/backend/routes/twilio/incoming")),
+  route("POST", /^\/api\/twilio\/incoming$/, () => import("@/backend/routes/twilio/incoming")),
   route("GET", /^\/api\/twilio\/incomingcall$/, () => import("@/app/api/twilio/incomingcall/route")),
   route("POST", /^\/api\/twilio\/incomingcall$/, () => import("@/app/api/twilio/incomingcall/route")),
   route("GET", /^\/api\/twilio\/voice$/, () => import("@/app/api/twilio/voice/route")),
   route("POST", /^\/api\/twilio\/voice$/, () => import("@/app/api/twilio/voice/route")),
   route("GET", /^\/api\/twilio\/call-status$/, () => import("@/app/api/twilio/call-status/route")),
   route("POST", /^\/api\/twilio\/call-status$/, () => import("@/app/api/twilio/call-status/route")),
-  route("GET", /^\/api\/twilio\/message-status$/, () => import("@/app/api/twilio/message-status/route")),
-  route("POST", /^\/api\/twilio\/message-status$/, () => import("@/app/api/twilio/message-status/route")),
+  route("GET", /^\/api\/twilio\/message-status$/, () => import("@/backend/routes/twilio/message-status")),
+  route("POST", /^\/api\/twilio\/message-status$/, () => import("@/backend/routes/twilio/message-status")),
   route("GET", /^\/api\/overview$/, () => import("@/app/api/overview/route")),
   route("GET", /^\/api\/cost\/summary$/, () => import("@/app/api/cost/summary/route")),
   route("GET", /^\/api\/cost\/usage$/, () => import("@/app/api/cost/usage/route")),
@@ -114,7 +117,7 @@ const routes: Route[] = [
   route("GET", /^\/api\/campaigns\/([^/]+)\/recipients$/, () => import("@/app/api/campaigns/[id]/recipients/route"), (m) => ({ id: m[1] })),
   route("GET", /^\/api\/campaigns\/([^/]+)\/cost$/, () => import("@/app/api/campaigns/[id]/cost/route"), (m) => ({ id: m[1] })),
   route("POST", /^\/api\/campaigns\/([^/]+)\/cost$/, () => import("@/app/api/campaigns/[id]/cost/route"), (m) => ({ id: m[1] })),
-  route("POST", /^\/api\/campaigns\/([^/]+)\/tick$/, () => import("@/app/api/campaigns/[id]/tick/route"), (m) => ({ id: m[1] })),
+  route("POST", /^\/api\/campaigns\/([^/]+)\/tick$/, () => import("@/backend/routes/campaigns/tick"), (m) => ({ id: m[1] })),
   route("POST", /^\/api\/campaigns\/([^/]+)\/control$/, () => import("@/app/api/campaigns/[id]/control/route"), (m) => ({ id: m[1] })),
   route("GET", /^\/api\/campaigns\/([^/]+)$/, () => import("@/app/api/campaigns/[id]/route"), (m) => ({ id: m[1] })),
   route("DELETE", /^\/api\/campaigns\/([^/]+)$/, () => import("@/app/api/campaigns/[id]/route"), (m) => ({ id: m[1] })),
@@ -145,6 +148,27 @@ function allowedOrigins(): string[] {
           "http://127.0.0.1:3001",
         ];
   return [...new Set([...PRODUCTION_WEB_ORIGINS, ...configured, ...local])];
+}
+
+function isLocalHostname(hostname: string): boolean {
+  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
+}
+
+function isLocalBrowserOrigin(origin: string): boolean {
+  try {
+    const url = new URL(origin);
+    return (
+      (url.protocol === "http:" || url.protocol === "https:") &&
+      isLocalHostname(url.hostname)
+    );
+  } catch {
+    return false;
+  }
+}
+
+function requestHost(hostHeader: string | string[] | undefined): string {
+  const host = (Array.isArray(hostHeader) ? hostHeader[0] : hostHeader) || "";
+  return host.replace(/^\[|\]$/g, "").split(":")[0] ?? "";
 }
 
 function isAllowedOrigin(origin: string | undefined): boolean {
@@ -201,6 +225,37 @@ async function readBody(req: IncomingMessage): Promise<Buffer> {
 
 const sockets = new Map<WebSocket, string>();
 
+function realtimeSecretMatches(header: string | string[] | undefined): boolean {
+  const expected = process.env.AUTH_SECRET?.trim() ?? "";
+  const got = (Array.isArray(header) ? header[0] : header)?.trim() ?? "";
+  if (!expected || !got) return false;
+  const provided = Buffer.from(got);
+  const actual = Buffer.from(expected);
+  if (provided.length !== actual.length) return false;
+  return timingSafeEqual(provided, actual);
+}
+
+function parseRelayEvent(raw: string): RealtimeEvent | null {
+  try {
+    const data = JSON.parse(raw) as Partial<RealtimeEvent>;
+    if (data.type !== "message") return null;
+    if (typeof data.phone !== "string" || !data.phone.trim()) return null;
+    if (data.direction !== "inbound" && data.direction !== "outbound") return null;
+    return {
+      type: "message",
+      phone: data.phone,
+      direction: data.direction,
+      ...(typeof data.organizationId === "string"
+        ? { organizationId: data.organizationId }
+        : {}),
+      ...(typeof data.body === "string" ? { body: data.body } : {}),
+      ...(typeof data.at === "string" ? { at: data.at } : {}),
+    };
+  } catch {
+    return null;
+  }
+}
+
 function broadcast(event: RealtimeEvent) {
   const payload = JSON.stringify(event);
   for (const [socket, organizationId] of sockets) {
@@ -231,6 +286,24 @@ async function handleHttp(req: IncomingMessage, res: ServerResponse) {
   if (req.method === "GET" && url.pathname === "/health") {
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ ok: true }));
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/internal/realtime") {
+    if (!realtimeSecretMatches(req.headers["x-realtime-secret"])) {
+      res.writeHead(401, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Unauthorized" }));
+      return;
+    }
+    const event = parseRelayEvent((await readBody(req)).toString("utf8"));
+    if (!event) {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Invalid realtime event" }));
+      return;
+    }
+    broadcast(event);
+    res.writeHead(204);
+    res.end();
     return;
   }
 
@@ -308,7 +381,12 @@ server.on("upgrade", (req, socket, head) => {
     return;
   }
   const origin = req.headers.origin;
-  if (origin && !allowedOrigins().includes(origin)) {
+  const localServer = isLocalHostname(requestHost(req.headers.host));
+  if (
+    origin &&
+    !allowedOrigins().includes(origin) &&
+    !(localServer && isLocalBrowserOrigin(origin))
+  ) {
     socket.destroy();
     return;
   }
@@ -330,4 +408,49 @@ server.on("upgrade", (req, socket, head) => {
 
 subscribeRealtime(broadcast);
 
+declare global {
+  // eslint-disable-next-line no-var
+  var _apiShutdownRegistered: boolean | undefined;
+}
+
+function registerApiShutdown(): void {
+  if (global._apiShutdownRegistered) return;
+  global._apiShutdownRegistered = true;
+
+  let started = false;
+  const shutdown = (signal: NodeJS.Signals) => {
+    if (started) return;
+    started = true;
+    console.log(`API shutting down (${signal})`);
+
+    let finished = false;
+    let forceTimer: ReturnType<typeof setTimeout> | undefined;
+    const finish = () => {
+      if (finished) return;
+      finished = true;
+      if (forceTimer) clearTimeout(forceTimer);
+      void closeMongoClient()
+        .catch((error) => {
+          console.error("MongoDB shutdown close failed:", error);
+        })
+        .finally(() => {
+          process.exit(0);
+        });
+    };
+
+    forceTimer = setTimeout(finish, 5_000);
+    forceTimer.unref();
+
+    for (const socket of sockets.keys()) {
+      socket.close();
+    }
+    wss.close();
+    server.close(finish);
+  };
+
+  process.once("SIGTERM", () => shutdown("SIGTERM"));
+  process.once("SIGINT", () => shutdown("SIGINT"));
+}
+
+registerApiShutdown();
 listen();

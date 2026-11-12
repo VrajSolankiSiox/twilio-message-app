@@ -1,7 +1,29 @@
 import type { NextConfig } from "next";
+import { backendOrigin } from "./lib/backend-url";
+
+const messagingPaths = [
+  "/api/send",
+  "/api/contacts",
+  "/api/conversations/close",
+  "/api/conversations/assign",
+  "/api/twilio/incoming",
+  "/api/twilio/message-status",
+  "/api/twilio/messages",
+  "/api/twilio/messages/:path*",
+  "/api/campaigns/:id/tick",
+];
 
 const nextConfig: NextConfig = {
   serverExternalPackages: ["twilio", "jose"],
+  async rewrites() {
+    const origin = backendOrigin();
+    return {
+      beforeFiles: messagingPaths.map((source) => ({
+        source,
+        destination: `${origin}${source}`,
+      })),
+    };
+  },
   async redirects() {
     return [
       {

@@ -56,6 +56,9 @@ interface TeamMember {
   role: string;
 }
 
+/** Inbox list refresh while the realtime socket is not open. */
+const INBOX_FALLBACK_POLL_MS = 12_000;
+
 function useRelativeTimeClock(intervalMs = 60_000): Date {
   const [now, setNow] = useState(() => new Date());
   useEffect(() => {
@@ -306,6 +309,26 @@ export default function ChatApp({ organizationId }: { organizationId: string }) 
   const pendingStartedRef = useRef(new Map<string, Conversation>());
   /** Avoid hammering thread API when inbox preview is ahead of loaded bubbles. */
   const threadReloadKeyRef = useRef("");
+  const listSilentInFlightRef = useRef(false);
+  const listSilentQueuedRef = useRef(false);
+  const threadSilentInFlightRef = useRef(false);
+  const threadSilentQueuedPhoneRef = useRef<string | null>(null);
+  const openInboxPollInFlightRef = useRef(false);
+  const fetchConversationsRef = useRef<
+    (options?: { page?: number; append?: boolean; silent?: boolean }) => Promise<void>
+  >(async () => undefined);
+  const loadThreadRef = useRef<
+    (
+      phone: string,
+      options?: {
+        before?: string;
+        prepend?: boolean;
+        appendNew?: boolean;
+        preserveScrollHeight?: number;
+        silent?: boolean;
+      }
+    ) => Promise<void>
+  >(async () => undefined);
   const filterKeyRef = useRef("0:0:0");
   filterKeyRef.current = `${showClosed}:${showStop}:${showBlank}`;
 
@@ -416,7 +439,7 @@ export default function ChatApp({ organizationId }: { organizationId: string }) 
           }),
         });
       } catch {
-        // The next inbox poll will reconcile read state.
+        // A later inbox sync will reconcile read state.
       }
     },
     []
@@ -453,6 +476,14 @@ export default function ChatApp({ organizationId }: { organizationId: string }) 
         silent?: boolean;
       }
     ) => {
+      const silentLatestPage =
+        Boolean(options?.silent) && !options?.before && !options?.prepend;
+      if (silentLatestPage && threadSilentInFlightRef.current) {
+        threadSilentQueuedPhoneRef.current = normalizePhone(phone);
+        return;
+      }
+      if (silentLatestPage) threadSilentInFlightRef.current = true;
+
       if (!options?.silent) setLoadingThread(true);
       try {
         const params = new URLSearchParams({
@@ -581,11 +612,20 @@ export default function ChatApp({ organizationId }: { organizationId: string }) 
       } catch {
         setError("Network error while loading messages.");
       } finally {
+        if (silentLatestPage) {
+          threadSilentInFlightRef.current = false;
+          const queuedPhone = threadSilentQueuedPhoneRef.current;
+          threadSilentQueuedPhoneRef.current = null;
+          if (queuedPhone) {
+            void loadThreadRef.current(queuedPhone, { silent: true });
+          }
+        }
         if (!options?.silent) setLoadingThread(false);
       }
     },
     [getNotificationContext, markConversationAsRead, scrollToBottom]
   );
+  loadThreadRef.current = loadThread;
 
   const handleMessagesScroll = () => {
     const el = messagesContainerRef.current;
@@ -655,6 +695,12 @@ export default function ChatApp({ organizationId }: { organizationId: string }) 
       const append = options?.append ?? false;
       const silent = options?.silent ?? false;
       const requestKey = filterKeyRef.current;
+      const silentListRefresh = silent && !append;
+      if (silentListRefresh && listSilentInFlightRef.current) {
+        listSilentQueuedRef.current = true;
+        return;
+      }
+      if (silentListRefresh) listSilentInFlightRef.current = true;
 
       try {
         if (append) setLoadingMoreList(true);
@@ -790,6 +836,13 @@ export default function ChatApp({ organizationId }: { organizationId: string }) 
       } catch {
         setError("Network error while loading messages.");
       } finally {
+        if (silentListRefresh) {
+          listSilentInFlightRef.current = false;
+          if (listSilentQueuedRef.current) {
+            listSilentQueuedRef.current = false;
+            void fetchConversationsRef.current({ page: 1, silent: true });
+          }
+        }
         setLoading(false);
         setRefreshing(false);
         setLoadingMoreList(false);
@@ -805,6 +858,7 @@ export default function ChatApp({ organizationId }: { organizationId: string }) 
       showBlank,
     ]
   );
+  fetchConversationsRef.current = fetchConversations;
 
   useLayoutEffect(() => {
     const org = organizationId.trim();
@@ -850,13 +904,33 @@ export default function ChatApp({ organizationId }: { organizationId: string }) 
     void fetchConversations({ page: 1 });
   }, [applyPendingStarted, fetchConversations]);
 
+  const getNotificationContextRef = useRef(getNotificationContext);
+  getNotificationContextRef.current = getNotificationContext;
+
   useEffect(() => {
     let socket: WebSocket | null = null;
     let stopped = false;
     let attempt = 0;
     let retryTimer: number | null = null;
+    let pollTimer: number | null = null;
+    let hasConnected = false;
+    let disconnectedAt: number | null = null;
+    let queuedOpenInboxSince: number | null | undefined;
 
-    const pollOpenInboxForNotifications = async () => {
+    const socketIsOpen = () => socket?.readyState === WebSocket.OPEN;
+
+    const clearPoll = () => {
+      if (pollTimer === null) return;
+      window.clearInterval(pollTimer);
+      pollTimer = null;
+    };
+
+    const pollOpenInboxForNotifications = async (missedSince: number | null = null) => {
+      if (openInboxPollInFlightRef.current) {
+        if (missedSince !== null) queuedOpenInboxSince = missedSince;
+        return;
+      }
+      openInboxPollInFlightRef.current = true;
       try {
         const params = new URLSearchParams({
           page: "1",
@@ -870,16 +944,52 @@ export default function ChatApp({ organizationId }: { organizationId: string }) 
         const incoming = data.conversations as Conversation[];
         const previous = openInboxSnapshotRef.current;
         openInboxSnapshotRef.current = incoming;
-        if (!previous) return;
+        const baseline =
+          previous ??
+          (missedSince
+            ? incoming.map((conv) =>
+                new Date(conv.lastMessageAt).getTime() >= missedSince
+                  ? {
+                      ...conv,
+                      lastMessage: "",
+                      lastMessageAt: new Date(missedSince - 1).toISOString(),
+                      lastMessageDirection: "outbound" as const,
+                    }
+                  : conv
+              )
+            : null);
+        if (!baseline) return;
         notifyInboundFromConversationUpdates(
-          previous,
+          baseline,
           incoming,
-          getNotificationContext(),
+          getNotificationContextRef.current(),
           notifiedInboundKeysRef.current
         );
       } catch {
         // The next poll retries.
+      } finally {
+        openInboxPollInFlightRef.current = false;
+        if (queuedOpenInboxSince !== undefined) {
+          const since = queuedOpenInboxSince;
+          queuedOpenInboxSince = undefined;
+          void pollOpenInboxForNotifications(since);
+        }
       }
+    };
+
+    const fallbackPoll = () => {
+      if (stopped || socketIsOpen()) return;
+      if (!getAuthToken() || !inboxNotificationsReadyRef.current) return;
+      if (filterKeyRef.current.startsWith("true:")) {
+        void pollOpenInboxForNotifications();
+        return;
+      }
+      void fetchConversationsRef.current({ page: 1, silent: true });
+    };
+
+    const startFallbackPoll = () => {
+      if (stopped || pollTimer !== null || socketIsOpen()) return;
+      pollTimer = window.setInterval(fallbackPoll, INBOX_FALLBACK_POLL_MS);
     };
 
     const connect = () => {
@@ -887,7 +997,15 @@ export default function ChatApp({ organizationId }: { organizationId: string }) 
       const base = wsBase();
       const token = getAuthToken();
       if (!base || !token) {
+        startFallbackPoll();
         retryTimer = window.setTimeout(connect, 2000);
+        return;
+      }
+      if (
+        socket &&
+        (socket.readyState === WebSocket.OPEN ||
+          socket.readyState === WebSocket.CONNECTING)
+      ) {
         return;
       }
       socket = new WebSocket(
@@ -895,6 +1013,16 @@ export default function ChatApp({ organizationId }: { organizationId: string }) 
       );
       socket.onopen = () => {
         attempt = 0;
+        clearPoll();
+        const reconnect = hasConnected;
+        const missedSince = disconnectedAt;
+        hasConnected = true;
+        disconnectedAt = null;
+        if (!reconnect) return;
+        void fetchConversationsRef.current({ page: 1, silent: true });
+        if (filterKeyRef.current.startsWith("true:")) {
+          void pollOpenInboxForNotifications(missedSince);
+        }
       };
       socket.onmessage = (event) => {
         try {
@@ -921,7 +1049,12 @@ export default function ChatApp({ organizationId }: { organizationId: string }) 
             const dedupeKey = `${phone}:${at}`;
             if (!notifiedInboundKeysRef.current.has(dedupeKey)) {
               notifiedInboundKeysRef.current.add(dedupeKey);
-              if (!shouldSuppressInboundNotification(phone, getNotificationContext())) {
+              if (
+                !shouldSuppressInboundNotification(
+                  phone,
+                  getNotificationContextRef.current()
+                )
+              ) {
                 const existing = conversationsRef.current.find(
                   (c) => normalizePhone(c.phone) === phone
                 );
@@ -947,9 +1080,13 @@ export default function ChatApp({ organizationId }: { organizationId: string }) 
                     lastMessage: body || existing.lastMessage,
                     lastMessageAt: at || existing.lastMessageAt,
                     lastMessageDirection: body ? direction : existing.lastMessageDirection,
-                    unread: Boolean(body) && direction === "inbound" && !stop && !viewing,
-                    isClosed: direction === "inbound" ? false : existing.isClosed,
-                    closedAt: direction === "inbound" ? null : existing.closedAt,
+                    unread: body
+                      ? direction === "inbound" && !stop && !viewing
+                      : existing.unread,
+                    isClosed:
+                      body && direction === "inbound" ? false : existing.isClosed,
+                    closedAt:
+                      body && direction === "inbound" ? null : existing.closedAt,
                     isStop: existing.isStop || stop,
                   }
                 : {
@@ -989,15 +1126,15 @@ export default function ChatApp({ organizationId }: { organizationId: string }) 
               return sortConversations([nextConv, ...rest]);
             });
           }
-          void fetchConversations({ page: 1, silent: true });
           const openPhone = selectedPhoneRef.current;
+          const previewChanged = Boolean(body || at);
           if (
+            phone &&
             openPhone &&
-            (!data.phone ||
-              normalizePhone(data.phone) === normalizePhone(openPhone))
+            normalizePhone(openPhone) === phone &&
+            !previewChanged
           ) {
-            threadReloadKeyRef.current = "";
-            void loadThread(openPhone, { silent: true });
+            void loadThreadRef.current(phone, { silent: true });
           }
         } catch {
           // Ignore malformed frames.
@@ -1009,30 +1146,30 @@ export default function ChatApp({ organizationId }: { organizationId: string }) 
       socket.onclose = () => {
         socket = null;
         if (stopped) return;
+        if (hasConnected) disconnectedAt = Date.now();
+        startFallbackPoll();
         attempt += 1;
         const delay = Math.min(15000, 1000 * 2 ** Math.min(attempt, 4));
         retryTimer = window.setTimeout(connect, delay);
       };
     };
 
+    startFallbackPoll();
     connect();
-
-    const pollTimer = window.setInterval(() => {
-      if (!getAuthToken() || !inboxNotificationsReadyRef.current) return;
-      if (filterKeyRef.current.startsWith("true:")) {
-        void pollOpenInboxForNotifications();
-        return;
-      }
-      void fetchConversations({ page: 1, silent: true });
-    }, 12000);
 
     return () => {
       stopped = true;
+      clearPoll();
       if (retryTimer !== null) window.clearTimeout(retryTimer);
-      window.clearInterval(pollTimer);
-      socket?.close();
+      if (
+        socket &&
+        (socket.readyState === WebSocket.OPEN ||
+          socket.readyState === WebSocket.CONNECTING)
+      ) {
+        socket.close();
+      }
     };
-  }, [fetchConversations, getNotificationContext, loadThread]);
+  }, [organizationId, persistListCache]);
 
   useEffect(() => {
     if (!selectedPhone) return;

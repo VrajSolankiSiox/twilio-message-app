@@ -1,3 +1,5 @@
+import { backendOrigin } from "@/lib/backend-url";
+
 const TOKEN_KEY = "revenelx-token";
 
 function jwtExpirationMs(token: string): number | null {
@@ -18,9 +20,7 @@ function isTokenExpired(token: string): boolean {
 }
 
 export function apiBase(): string {
-  const configured = process.env.NEXT_PUBLIC_API_URL?.trim();
-  if (configured) return configured.replace(/\/$/, "");
-  return "";
+  return backendOrigin();
 }
 
 export function apiUrl(path: string): string {
@@ -33,7 +33,6 @@ export function wsBase(): string {
   const configured = process.env.NEXT_PUBLIC_WS_URL?.trim();
   if (configured) return configured.replace(/\/$/, "");
   const api = apiBase();
-  if (!api) return "";
   if (api.startsWith("https://")) return `wss://${api.slice("https://".length)}`;
   if (api.startsWith("http://")) return `ws://${api.slice("http://".length)}`;
   return api;

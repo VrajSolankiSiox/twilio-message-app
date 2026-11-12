@@ -6,8 +6,8 @@ import twilio from "twilio";
  * - TWILIO_FROM_NUMBER — caller ID for outbound and inbound PSTN leg
  * - TWILIO_API_KEY + TWILIO_API_SECRET — Voice access tokens (Console → API keys)
  * - TWILIO_TWIML_APP_SID — TwiML App with VOICE REQUEST URL → /api/twilio/voice (POST)
- * - TWILIO_WEBHOOK_URL — public app base (e.g. https://your-app.vercel.app/api/twilio/incoming)
- *   Used to derive call-status URL; set phone SMS webhook to same host /api/twilio/incoming
+ * - TWILIO_WEBHOOK_URL — public backend base (e.g. https://revenelx.duckdns.org/api/twilio/incoming)
+ *   Used to derive call-status URL; set the phone SMS webhook to this backend host /api/twilio/incoming
  * - Phone number VOICE: primary /api/twilio/incoming, failover /api/twilio/incomingcall
  * Optional: TWILIO_CALL_STATUS_WEBHOOK_URL — full URL for call status callbacks
  */
